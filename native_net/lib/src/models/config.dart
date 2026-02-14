@@ -1,34 +1,78 @@
+import 'cookie_config.dart';
+import 'proxy_config.dart';
+import 'tls_config.dart';
+
+/// HTTP version preference.
+enum HttpVersion {
+  /// Let libcurl decide (default).
+  auto_(0),
+
+  /// Force HTTP/1.0.
+  http10(1),
+
+  /// Force HTTP/1.1.
+  http11(2),
+
+  /// Prefer HTTP/2 (with HTTP/1.1 fallback).
+  http2(3),
+
+  /// Prefer HTTP/3 (with fallback, requires QUIC support in the build).
+  http3(4);
+
+  final int value;
+  const HttpVersion(this.value);
+}
+
 /// Configuration for [NativeNetClient].
 ///
-/// Controls default timeouts, redirect behavior, logging, and other
-/// client-level settings that apply to all requests made by the client.
+/// Controls defaults for timeouts, TLS, proxy, cookies, HTTP version,
+/// speed limits, and other client-level settings that apply to all requests.
 class NativeNetConfig {
-  /// Default connection timeout for all requests.
+  // ── Timeouts ──
   final Duration connectTimeout;
-
-  /// Default read timeout for all requests.
   final Duration readTimeout;
-
-  /// Default write timeout for all requests.
   final Duration writeTimeout;
 
-  /// Whether to follow redirects by default.
+  // ── Redirects ──
   final bool followRedirects;
-
-  /// Maximum number of redirects to follow.
   final int maxRedirects;
 
-  /// Default headers applied to all requests.
+  // ── Headers ──
   final Map<String, String>? defaultHeaders;
 
-  /// Whether to enable native-level logging.
+  // ── TLS / SSL ──
+  /// TLS configuration (self-signed certs, CA bundles, client certs, pinning).
+  final TlsConfig? tls;
+
+  // ── Proxy ──
+  /// Proxy configuration (HTTP, SOCKS4, SOCKS5).
+  final ProxyConfig? proxy;
+
+  // ── Cookies ──
+  /// Cookie configuration (in-memory or file-based cookie jar).
+  final CookieConfig? cookies;
+
+  // ── HTTP version ──
+  /// Preferred HTTP version. Default: [HttpVersion.auto_].
+  final HttpVersion httpVersion;
+
+  // ── Speed limits ──
+  /// Maximum download speed in bytes per second. 0 = unlimited.
+  final int maxDownloadSpeed;
+
+  /// Maximum upload speed in bytes per second. 0 = unlimited.
+  final int maxUploadSpeed;
+
+  // ── User-Agent ──
+  /// Default User-Agent header. Set to `null` to use libcurl's default.
+  final String? userAgent;
+
+  // ── DNS ──
+  /// Custom DNS servers (e.g. `"1.1.1.1,8.8.8.8"`).
+  final String? dnsServers;
+
+  // ── Logging ──
   final bool enableLogging;
-
-  /// Maximum number of idle connections in the connection pool (Android/OkHttp).
-  final int maxIdleConnections;
-
-  /// Keep-alive duration for idle connections.
-  final Duration keepAliveDuration;
 
   const NativeNetConfig({
     this.connectTimeout = const Duration(seconds: 30),
@@ -37,9 +81,15 @@ class NativeNetConfig {
     this.followRedirects = true,
     this.maxRedirects = 5,
     this.defaultHeaders,
+    this.tls,
+    this.proxy,
+    this.cookies,
+    this.httpVersion = HttpVersion.auto_,
+    this.maxDownloadSpeed = 0,
+    this.maxUploadSpeed = 0,
+    this.userAgent,
+    this.dnsServers,
     this.enableLogging = false,
-    this.maxIdleConnections = 5,
-    this.keepAliveDuration = const Duration(minutes: 5),
   });
 
   /// Converts this config to a map for platform channel serialization.
@@ -52,8 +102,6 @@ class NativeNetConfig {
       'maxRedirects': maxRedirects,
       if (defaultHeaders != null) 'defaultHeaders': defaultHeaders,
       'enableLogging': enableLogging,
-      'maxIdleConnections': maxIdleConnections,
-      'keepAliveDuration': keepAliveDuration.inMilliseconds,
     };
   }
 }

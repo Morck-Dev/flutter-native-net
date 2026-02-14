@@ -111,11 +111,11 @@ class NativeNetClient {
     if (mergedHeaders.isNotEmpty) {
       requestMap['headers'] = mergedHeaders;
     }
-    // Pass verbose flag from config
-    requestMap['verbose'] = _config.enableLogging;
+
+    // Inject all client-level config options
+    _applyConfigToMap(requestMap);
 
     // Handle multipart body building in Dart
-    // (The C layer receives the body as raw bytes; Dart does the encoding.)
     if (processedRequest.files != null &&
         processedRequest.files!.isNotEmpty) {
       final multipartResult = _buildMultipartBody(
@@ -444,19 +444,16 @@ class NativeNetClient {
         'url': url,
         'filePath': savePath,
         'headers': mergedHeaders.isNotEmpty ? mergedHeaders : null,
-        'connectTimeout': connectTimeout?.inMilliseconds ??
-            _config.connectTimeout.inMilliseconds,
-        'readTimeout':
-            readTimeout?.inMilliseconds ?? _config.readTimeout.inMilliseconds,
-        'followRedirects': _config.followRedirects,
-        'maxRedirects': _config.maxRedirects,
-        'verbose': _config.enableLogging,
+        if (connectTimeout != null)
+          'connectTimeout': connectTimeout.inMilliseconds,
+        if (readTimeout != null)
+          'readTimeout': readTimeout.inMilliseconds,
         '_progressAddr': progressAddr,
       };
+      _applyConfigToMap(data);
 
       final resultMap = await NativeNetPlatform.instance.downloadFile(data);
 
-      // Final progress update
       if (onProgress != null) {
         onProgress(progressPtr.ref.downloadNow, progressPtr.ref.downloadTotal);
       }
@@ -561,15 +558,13 @@ class NativeNetClient {
         'fileName': fileName,
         'mimeType': contentType,
         'extraFields': extraFieldsStr,
-        'connectTimeout': connectTimeout?.inMilliseconds ??
-            _config.connectTimeout.inMilliseconds,
-        'readTimeout':
-            readTimeout?.inMilliseconds ?? _config.readTimeout.inMilliseconds,
-        'followRedirects': _config.followRedirects,
-        'maxRedirects': _config.maxRedirects,
-        'verbose': _config.enableLogging,
+        if (connectTimeout != null)
+          'connectTimeout': connectTimeout.inMilliseconds,
+        if (readTimeout != null)
+          'readTimeout': readTimeout.inMilliseconds,
         '_progressAddr': progressAddr,
       };
+      _applyConfigToMap(data);
 
       final resultMap = await NativeNetPlatform.instance.uploadFile(data);
 
@@ -582,6 +577,77 @@ class NativeNetClient {
       progressTimer?.cancel();
       cancelTimer?.cancel();
       calloc.free(progressPtr);
+    }
+  }
+
+  // ─── Config injection ────────────────────────────────────────────────────
+
+  /// Injects all client-level config options into a request data map.
+  void _applyConfigToMap(Map<String, dynamic> map) {
+    // Verbose
+    map['verbose'] = _config.enableLogging;
+
+    // Timeouts (only if not already set per-request)
+    map['connectTimeout'] ??= _config.connectTimeout.inMilliseconds;
+    map['readTimeout'] ??= _config.readTimeout.inMilliseconds;
+    map['followRedirects'] ??= _config.followRedirects;
+    map['maxRedirects'] ??= _config.maxRedirects;
+
+    // TLS
+    final tls = _config.tls;
+    if (tls != null) {
+      map['sslVerifyPeer'] = tls.verifyPeer ? 1 : -1;
+      map['sslVerifyHost'] = tls.verifyHost ? 2 : -1;
+      if (tls.caInfoPath != null) map['caInfo'] = tls.caInfoPath;
+      if (tls.caDirectoryPath != null) map['caPath'] = tls.caDirectoryPath;
+      if (tls.clientCertPath != null) map['clientCert'] = tls.clientCertPath;
+      if (tls.clientKeyPath != null) map['clientKey'] = tls.clientKeyPath;
+      if (tls.clientCertType != null) map['clientCertType'] = tls.clientCertType;
+      if (tls.pinnedPublicKey != null) {
+        map['pinnedPublicKey'] = tls.pinnedPublicKey;
+      }
+    }
+
+    // Proxy
+    final proxy = _config.proxy;
+    if (proxy != null) {
+      map['proxy'] = proxy.url;
+      map['proxyType'] = proxy.type.value;
+      map['httpProxyTunnel'] = proxy.tunnel ? 1 : 0;
+      if (proxy.username != null && proxy.password != null) {
+        map['proxyUserpwd'] = '${proxy.username}:${proxy.password}';
+      }
+    }
+
+    // Cookies
+    final cookies = _config.cookies;
+    if (cookies != null) {
+      if (cookies.cookies != null) map['cookie'] = cookies.cookies;
+      if (cookies.cookieFile != null) map['cookieFile'] = cookies.cookieFile;
+      if (cookies.cookieJar != null) map['cookieJar'] = cookies.cookieJar;
+    }
+
+    // HTTP version
+    if (_config.httpVersion.value > 0) {
+      map['httpVersion'] = _config.httpVersion.value;
+    }
+
+    // Speed limits
+    if (_config.maxDownloadSpeed > 0) {
+      map['maxRecvSpeed'] = _config.maxDownloadSpeed;
+    }
+    if (_config.maxUploadSpeed > 0) {
+      map['maxSendSpeed'] = _config.maxUploadSpeed;
+    }
+
+    // User-Agent
+    if (_config.userAgent != null) {
+      map['userAgent'] = _config.userAgent;
+    }
+
+    // DNS
+    if (_config.dnsServers != null) {
+      map['dnsServers'] = _config.dnsServers;
     }
   }
 
