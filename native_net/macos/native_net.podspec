@@ -1,6 +1,5 @@
 #
-# To learn more about a Podspec see http://guides.cocoapods.org/syntax/podspec.html.
-# Run `pod lib lint native_net.podspec` to validate before publishing.
+# macOS podspec – always builds libcurl from source.
 #
 Pod::Spec.new do |s|
   s.name             = 'native_net'
@@ -8,7 +7,8 @@ Pod::Spec.new do |s|
   s.summary          = 'Flutter plugin for native HTTP networking using libcurl.'
   s.description      = <<-DESC
 A Flutter FFI plugin that wraps libcurl for HTTP networking on macOS.
-Uses the system-provided libcurl (pre-installed on macOS).
+libcurl is built from source with Secure Transport as the TLS backend
+so the plugin has zero runtime dependencies on the host system.
                        DESC
   s.homepage         = 'https://github.com/example/flutter-native-net'
   s.license          = { :file => '../LICENSE' }
@@ -19,11 +19,21 @@ Uses the system-provided libcurl (pre-installed on macOS).
   s.dependency 'FlutterMacOS'
   s.platform         = :osx, '10.14'
 
-  # macOS ships with libcurl – just link against it
-  s.library          = 'curl'
+  # Build libcurl from source before compiling the plugin
+  s.script_phase = {
+    :name => 'Build libcurl for macOS',
+    :script => 'bash "${PODS_TARGET_SRCROOT}/../scripts/build_curl_macos.sh" "${PODS_TARGET_SRCROOT}/Frameworks/curl-macos"',
+    :execution_position => :before_compile,
+    :shell_path => '/bin/bash',
+  }
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
-    'HEADER_SEARCH_PATHS' => '"$(PODS_TARGET_SRCROOT)/../src"',
+    'HEADER_SEARCH_PATHS' => [
+      '"$(PODS_TARGET_SRCROOT)/../src"',
+      '"$(PODS_TARGET_SRCROOT)/Frameworks/curl-macos/include"',
+    ].join(' '),
+    'LIBRARY_SEARCH_PATHS' => '"$(PODS_TARGET_SRCROOT)/Frameworks/curl-macos/lib"',
+    'OTHER_LDFLAGS' => '-lcurl',
   }
 end
