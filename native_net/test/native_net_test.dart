@@ -3,20 +3,17 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:native_net/native_net.dart';
 import 'package:native_net/native_net_platform_interface.dart';
-import 'package:native_net/native_net_method_channel.dart';
-import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
-class MockNativeNetPlatform
-    with MockPlatformInterfaceMixin
-    implements NativeNetPlatform {
-
+/// Mock platform implementation for testing.
+class MockNativeNetPlatform extends NativeNetPlatform {
   bool initialized = false;
   bool disposed = false;
   Map<String, dynamic>? lastConfig;
   Map<String, dynamic>? lastRequest;
 
   @override
-  Future<String?> getPlatformVersion() async => 'Test Platform 1.0 (Mock)';
+  Future<String?> getPlatformVersion() async =>
+      'Test Platform 1.0 (Mock libcurl)';
 
   @override
   Future<void> initialize(Map<String, dynamic> config) async {
@@ -25,7 +22,9 @@ class MockNativeNetPlatform
   }
 
   @override
-  Future<Map<dynamic, dynamic>> request(Map<String, dynamic> requestData) async {
+  Future<Map<dynamic, dynamic>> request(
+    Map<String, dynamic> requestData,
+  ) async {
     lastRequest = requestData;
     return {
       'statusCode': 200,
@@ -48,12 +47,6 @@ class MockNativeNetPlatform
 }
 
 void main() {
-  final NativeNetPlatform initialPlatform = NativeNetPlatform.instance;
-
-  test('$MethodChannelNativeNet is the default instance', () {
-    expect(initialPlatform, isInstanceOf<MethodChannelNativeNet>());
-  });
-
   group('NativeNetClient', () {
     late MockNativeNetPlatform mockPlatform;
     late NativeNetClient client;
@@ -70,10 +63,13 @@ void main() {
     });
 
     test('getPlatformVersion returns mock platform version', () async {
-      expect(await client.getPlatformVersion(), 'Test Platform 1.0 (Mock)');
+      expect(
+        await client.getPlatformVersion(),
+        'Test Platform 1.0 (Mock libcurl)',
+      );
     });
 
-    test('GET request initializes client and sends correct data', () async {
+    test('GET request initialises client and sends correct data', () async {
       final response = await client.get('https://api.example.com/data');
 
       expect(mockPlatform.initialized, isTrue);
@@ -163,7 +159,7 @@ void main() {
     });
 
     test('close disposes platform resources', () async {
-      // Trigger initialization
+      // Trigger initialisation
       await client.get('https://api.example.com/data');
       await client.close();
 
@@ -220,6 +216,17 @@ void main() {
       expect(mockPlatform.lastRequest?['connectTimeout'], 5000);
       expect(mockPlatform.lastRequest?['readTimeout'], 10000);
     });
+
+    test('verbose flag is passed from config', () async {
+      final verboseClient = NativeNetClient(
+        config: const NativeNetConfig(enableLogging: true),
+      );
+      NativeNetPlatform.instance = mockPlatform;
+
+      await verboseClient.get('https://api.example.com/data');
+      expect(mockPlatform.lastRequest?['verbose'], isTrue);
+      await verboseClient.close();
+    });
   });
 
   group('NativeNetResponse', () {
@@ -244,26 +251,42 @@ void main() {
 
     test('status code ranges are detected correctly', () {
       expect(
-        NativeNetResponse(statusCode: 200, headers: const {}, bodyBytes: Uint8List(0)).isSuccess,
+        NativeNetResponse(
+          statusCode: 200,
+          headers: const {},
+          bodyBytes: Uint8List(0),
+        ).isSuccess,
         isTrue,
       );
       expect(
-        NativeNetResponse(statusCode: 301, headers: const {}, bodyBytes: Uint8List(0)).isRedirect,
+        NativeNetResponse(
+          statusCode: 301,
+          headers: const {},
+          bodyBytes: Uint8List(0),
+        ).isRedirect,
         isTrue,
       );
       expect(
-        NativeNetResponse(statusCode: 404, headers: const {}, bodyBytes: Uint8List(0)).isClientError,
+        NativeNetResponse(
+          statusCode: 404,
+          headers: const {},
+          bodyBytes: Uint8List(0),
+        ).isClientError,
         isTrue,
       );
       expect(
-        NativeNetResponse(statusCode: 500, headers: const {}, bodyBytes: Uint8List(0)).isServerError,
+        NativeNetResponse(
+          statusCode: 500,
+          headers: const {},
+          bodyBytes: Uint8List(0),
+        ).isServerError,
         isTrue,
       );
     });
   });
 
   group('NativeNetConfig', () {
-    test('toMap correctly serializes config', () {
+    test('toMap correctly serialises config', () {
       const config = NativeNetConfig(
         connectTimeout: Duration(seconds: 10),
         readTimeout: Duration(seconds: 20),
@@ -282,7 +305,7 @@ void main() {
   });
 
   group('NativeNetRequest', () {
-    test('toMap correctly serializes request', () {
+    test('toMap correctly serialises request', () {
       final request = NativeNetRequest(
         url: 'https://api.example.com/data',
         method: HttpMethod.post,

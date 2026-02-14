@@ -14,12 +14,19 @@ import 'package:native_net/native_net.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('getPlatformVersion test', (WidgetTester tester) async {
-    final client = NativeNetClient();
-    final String? version = await client.getPlatformVersion();
-    // The version string depends on the host platform running the test, so
-    // just assert that some non-empty string is returned.
-    expect(version?.isNotEmpty, true);
+  testWidgets('NativeNetClient can make a GET request',
+      (WidgetTester tester) async {
+    final client = NativeNetClient(
+      config: const NativeNetConfig(
+        connectTimeout: Duration(seconds: 10),
+        readTimeout: Duration(seconds: 10),
+      ),
+    );
+
+    final response = await client.get('https://httpbin.org/get');
+    expect(response.isSuccess, true);
+    expect(response.statusCode, 200);
+
     await client.close();
   });
 }

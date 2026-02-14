@@ -1,8 +1,7 @@
 # flutter-native-net
 
-A Flutter plugin that wraps native platform HTTP networking frameworks to provide superior networking capabilities.
+A Flutter plugin for native HTTP networking powered by [libcurl](https://curl.se/libcurl/).
 
-- **Android**: OkHttp (Square's industry-standard HTTP client)
-- **iOS/macOS**: URLSession (Apple's native networking framework)
+Uses a single C codebase wrapping libcurl across **all platforms** — Android, iOS, macOS, Linux, Windows — with automatic Fetch API fallback on Web.
 
 See [native_net/README.md](native_net/README.md) for full documentation.

@@ -1,26 +1,47 @@
 # native_net
 
-A Flutter plugin that leverages **native platform HTTP networking frameworks** for superior performance and platform integration.
+A Flutter plugin for **native HTTP networking** powered by [libcurl](https://curl.se/libcurl/) — the most widely deployed HTTP library in the world.
 
-| Platform | Native Framework | Key Features |
-|----------|-----------------|--------------|
-| **Android** | [OkHttp 4.12](https://square.github.io/okhttp/) | HTTP/2, connection pooling, transparent GZIP, interceptors |
-| **iOS** | [URLSession](https://developer.apple.com/documentation/foundation/urlsession) | HTTP/2 & HTTP/3, system certificate management, ATS compliance |
-| **macOS** | [URLSession](https://developer.apple.com/documentation/foundation/urlsession) | HTTP/2 & HTTP/3, system proxy support, Keychain integration |
+## Architecture
 
-## Why native_net?
+A single C codebase wraps libcurl and is compiled for every platform. Only one
+native dependency to maintain.
 
-Most Dart HTTP libraries (`http`, `dio`, etc.) use `dart:io`'s `HttpClient`, which is a standalone TLS/HTTP implementation that doesn't benefit from:
+```
+┌──────────────────────────────────────────────────────┐
+│              Dart API  (NativeNetClient)              │
+│   Unified interface · interceptors · models          │
+├──────────────────────────────────────────────────────┤
+│                    dart:ffi bridge                    │
+├─────────┬─────────┬───────┬───────┬──────┬───────────┤
+│ Android │   iOS   │ macOS │ Linux │ Win  │    Web    │
+│  (NDK)  │(SecTrsp)│(sys)  │(sys)  │(Sch) │(Fetch API)│
+│         │         │       │       │      │           │
+│    libcurl + mbedTLS / SecureTransport / Schannel    │
+└─────────┴─────────┴───────┴───────┴──────┴───────────┘
+```
 
-- **System proxy settings** - native frameworks automatically respect system-configured proxies
-- **Platform certificate stores** - automatic trust of enterprise/system certificates
-- **OS-level optimizations** - HTTP/2 multiplexing, connection coalescing, QUIC/HTTP/3
-- **Connection pooling** - OkHttp's aggressive connection reuse saves significant latency
-- **Network condition awareness** - iOS/macOS can intelligently manage requests based on network state
+| Platform | TLS Backend | libcurl Source |
+|----------|-------------|----------------|
+| **Android** | mbedTLS (auto-built) | CMake FetchContent |
+| **iOS** | Secure Transport | Build script |
+| **macOS** | Secure Transport | System `/usr/lib/libcurl.dylib` |
+| **Linux** | OpenSSL | System `libcurl.so` |
+| **Windows** | Schannel | CMake FetchContent |
+| **Web** | Browser TLS | N/A (Fetch API fallback) |
+
+## Why libcurl?
+
+- **Battle-tested** — powers curl, PHP, Python requests, git, and 20 billion+ installations
+- **Protocol support** — HTTP/1.1, HTTP/2, HTTP/3 (QUIC), WebSocket
+- **Single codebase** — one C wrapper for all platforms (no OkHttp + URLSession + WinHTTP)
+- **Connection pooling** — automatic keep-alive and connection reuse
+- **Transparent compression** — gzip, deflate, brotli, zstd
+- **Proxy support** — HTTP, SOCKS4, SOCKS5
+- **Cookie engine** — built-in cookie jar
+- **Redirect handling** — configurable automatic redirects
 
 ## Installation
-
-Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
@@ -30,12 +51,30 @@ dependencies:
       path: native_net
 ```
 
+### Platform-specific setup
+
+**Android, macOS, Linux, Windows** — no extra setup needed. libcurl is either
+already on the system or is built automatically during the first Flutter build.
+
+**iOS** — run the build script once before the first build:
+
+```bash
+cd native_net
+bash scripts/build_curl_ios.sh
+```
+
+**Linux** — ensure system libcurl is installed:
+
+```bash
+sudo apt install libcurl4-openssl-dev   # Debian/Ubuntu
+sudo dnf install libcurl-devel          # Fedora
+```
+
 ## Quick Start
 
 ```dart
 import 'package:native_net/native_net.dart';
 
-// Create a client with configuration
 final client = NativeNetClient(
   config: NativeNetConfig(
     connectTimeout: Duration(seconds: 10),
@@ -70,15 +109,7 @@ client.close();
 
 ## API Reference
 
-### NativeNetClient
-
-The main HTTP client. Create one instance and reuse it across your app.
-
-```dart
-final client = NativeNetClient(config: NativeNetConfig(...));
-```
-
-#### HTTP Methods
+### HTTP Methods
 
 | Method | Description |
 |--------|-------------|
@@ -93,9 +124,7 @@ final client = NativeNetClient(config: NativeNetConfig(...));
 | `client.head(url)` | HEAD request |
 | `client.multipart(url, files: ..., formFields: ...)` | Multipart form upload |
 
-All methods accept optional `headers`, `connectTimeout`, and `readTimeout` parameters.
-
-### NativeNetConfig
+### Configuration
 
 ```dart
 const config = NativeNetConfig(
@@ -104,38 +133,32 @@ const config = NativeNetConfig(
   writeTimeout: Duration(seconds: 30),      // Write timeout
   followRedirects: true,                     // Auto-follow redirects
   maxRedirects: 5,                           // Max redirect hops
-  enableLogging: false,                      // Native-level logging
-  maxIdleConnections: 5,                     // Connection pool size (Android)
-  keepAliveDuration: Duration(minutes: 5),   // Idle connection TTL
+  enableLogging: false,                      // curl verbose mode
   defaultHeaders: {                          // Applied to all requests
     'Authorization': 'Bearer token',
   },
 );
 ```
 
-### NativeNetResponse
+### Response
 
 ```dart
-final response = await client.get('https://api.example.com/data');
-
-response.statusCode;    // int: 200, 404, 500, etc.
+response.statusCode;    // int: 200, 404, 500, …
 response.body;          // String: UTF-8 decoded body
 response.jsonBody;      // dynamic: Parsed JSON
 response.bodyBytes;     // Uint8List: Raw bytes
 response.headers;       // Map<String, String>
 response.duration;      // Duration: Request time
-response.isSuccess;     // bool: 2xx status
-response.isClientError; // bool: 4xx status
-response.isServerError; // bool: 5xx status
+response.isSuccess;     // bool: 2xx
+response.isClientError; // bool: 4xx
+response.isServerError; // bool: 5xx
 response.finalUrl;      // String?: After redirects
 ```
 
 ### Interceptors
 
 ```dart
-// Request interceptor - modify requests before sending
 client.addRequestInterceptor((request) async {
-  // Add auth token to every request
   return NativeNetRequest(
     url: request.url,
     method: request.method,
@@ -147,34 +170,12 @@ client.addRequestInterceptor((request) async {
   );
 });
 
-// Response interceptor - process responses
 client.addResponseInterceptor((response) async {
   if (response.statusCode == 401) {
     // Handle token refresh
   }
   return response;
 });
-```
-
-### File Upload (Multipart)
-
-```dart
-import 'dart:typed_data';
-
-final response = await client.multipart(
-  'https://api.example.com/upload',
-  formFields: {
-    'description': 'My photo',
-  },
-  files: [
-    MultipartFile(
-      field: 'photo',
-      fileName: 'image.jpg',
-      bytes: imageBytes,  // Uint8List
-      contentType: 'image/jpeg',
-    ),
-  ],
-);
 ```
 
 ### Error Handling
@@ -195,23 +196,14 @@ try {
 }
 ```
 
-## Architecture
+## How It Works
 
-```
-┌─────────────────────────────────────────┐
-│           Dart API (NativeNetClient)     │
-│  Unified interface, interceptors, models│
-├─────────────────────────────────────────┤
-│         Platform Interface              │
-│     MethodChannel communication         │
-├──────────┬──────────┬───────────────────┤
-│ Android  │   iOS    │      macOS        │
-│ (Kotlin) │ (Swift)  │     (Swift)       │
-│          │          │                   │
-│ OkHttp   │URLSession│   URLSession      │
-│ 4.12.0   │          │                   │
-└──────────┴──────────┴───────────────────┘
-```
+1. **Dart layer** (`NativeNetClient`) provides a clean async API
+2. Each HTTP request is sent to a **worker Isolate** (keeps UI thread responsive)
+3. The worker isolate calls the **C wrapper** via `dart:ffi`
+4. The C wrapper calls **libcurl's easy API** (blocking but in the isolate)
+5. Response data is copied to Dart and the native memory is freed
+6. On **web**, the browser's Fetch API is used instead (automatic fallback)
 
 ## Platform Requirements
 
@@ -220,6 +212,9 @@ try {
 | Android | API 24 (Android 7.0) |
 | iOS | 12.0 |
 | macOS | 10.14 |
+| Linux | Any with libcurl 7.x+ |
+| Windows | Windows 10+ |
+| Web | Any modern browser |
 
 ## License
 
