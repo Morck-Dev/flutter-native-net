@@ -300,6 +300,97 @@ void main() {
       token.cancel();
       expect(token.isCancelled, isTrue);
     });
+
+    test('TLS config options are passed through', () async {
+      final tlsClient = NativeNetClient(
+        config: const NativeNetConfig(
+          tls: TlsConfig(
+            verifyPeer: false,
+            verifyHost: false,
+            caInfoPath: '/path/to/ca.crt',
+            clientCertPath: '/path/to/client.pem',
+            clientKeyPath: '/path/to/client-key.pem',
+            pinnedPublicKey: 'sha256//abc123=',
+          ),
+        ),
+      );
+      NativeNetPlatform.instance = mockPlatform;
+
+      await tlsClient.get('https://self-signed.example.com/api');
+
+      expect(mockPlatform.lastRequest?['sslVerifyPeer'], -1);
+      expect(mockPlatform.lastRequest?['sslVerifyHost'], -1);
+      expect(mockPlatform.lastRequest?['caInfo'], '/path/to/ca.crt');
+      expect(mockPlatform.lastRequest?['clientCert'], '/path/to/client.pem');
+      expect(mockPlatform.lastRequest?['clientKey'], '/path/to/client-key.pem');
+      expect(mockPlatform.lastRequest?['pinnedPublicKey'], 'sha256//abc123=');
+      await tlsClient.close();
+    });
+
+    test('Proxy config options are passed through', () async {
+      final proxyClient = NativeNetClient(
+        config: const NativeNetConfig(
+          proxy: ProxyConfig(
+            url: 'http://proxy:8080',
+            type: ProxyType.socks5,
+            username: 'user',
+            password: 'pass',
+            tunnel: true,
+          ),
+        ),
+      );
+      NativeNetPlatform.instance = mockPlatform;
+
+      await proxyClient.get('https://api.example.com/data');
+
+      expect(mockPlatform.lastRequest?['proxy'], 'http://proxy:8080');
+      expect(mockPlatform.lastRequest?['proxyType'], 5);
+      expect(mockPlatform.lastRequest?['proxyUserpwd'], 'user:pass');
+      expect(mockPlatform.lastRequest?['httpProxyTunnel'], 1);
+      await proxyClient.close();
+    });
+
+    test('Cookie config options are passed through', () async {
+      final cookieClient = NativeNetClient(
+        config: const NativeNetConfig(
+          cookies: CookieConfig(
+            cookies: 'session=abc; theme=dark',
+            cookieFile: '/tmp/cookies.txt',
+            cookieJar: '/tmp/cookies.txt',
+          ),
+        ),
+      );
+      NativeNetPlatform.instance = mockPlatform;
+
+      await cookieClient.get('https://api.example.com/data');
+
+      expect(mockPlatform.lastRequest?['cookie'], 'session=abc; theme=dark');
+      expect(mockPlatform.lastRequest?['cookieFile'], '/tmp/cookies.txt');
+      expect(mockPlatform.lastRequest?['cookieJar'], '/tmp/cookies.txt');
+      await cookieClient.close();
+    });
+
+    test('HTTP version and speed limits are passed through', () async {
+      final advClient = NativeNetClient(
+        config: const NativeNetConfig(
+          httpVersion: HttpVersion.http2,
+          maxDownloadSpeed: 1048576,
+          maxUploadSpeed: 524288,
+          userAgent: 'MyApp/1.0',
+          dnsServers: '1.1.1.1,8.8.8.8',
+        ),
+      );
+      NativeNetPlatform.instance = mockPlatform;
+
+      await advClient.get('https://api.example.com/data');
+
+      expect(mockPlatform.lastRequest?['httpVersion'], 3); // http2 = 3
+      expect(mockPlatform.lastRequest?['maxRecvSpeed'], 1048576);
+      expect(mockPlatform.lastRequest?['maxSendSpeed'], 524288);
+      expect(mockPlatform.lastRequest?['userAgent'], 'MyApp/1.0');
+      expect(mockPlatform.lastRequest?['dnsServers'], '1.1.1.1,8.8.8.8');
+      await advClient.close();
+    });
   });
 
   group('NativeNetResponse', () {
