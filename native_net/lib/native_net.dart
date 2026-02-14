@@ -1,11 +1,16 @@
-/// A Flutter plugin that leverages native platform HTTP networking frameworks.
+/// A Flutter plugin for native HTTP networking powered by **libcurl**.
 ///
-/// - **Android**: Uses OkHttp (Square's industry-standard HTTP client)
-/// - **iOS/macOS**: Uses URLSession (Apple's native networking framework)
+/// Uses libcurl via dart:ffi on all native platforms (Android, iOS, macOS,
+/// Linux, Windows) and falls back to the browser Fetch API on web.
 ///
-/// This provides better performance, automatic system proxy support,
-/// platform certificate management, and HTTP/2 support compared to
-/// pure-Dart HTTP clients.
+/// ```dart
+/// import 'package:native_net/native_net.dart';
+///
+/// final client = NativeNetClient();
+/// final response = await client.get('https://httpbin.org/get');
+/// print(response.body);
+/// client.close();
+/// ```
 library;
 
 // Client

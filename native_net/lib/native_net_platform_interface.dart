@@ -1,48 +1,52 @@
-import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'src/default_platform.dart';
 
-import 'native_net_method_channel.dart';
-
-/// The interface that implementations of native_net must implement.
+/// The interface that platform implementations of native_net must implement.
 ///
-/// Platform implementations should extend this class rather than implement
-/// it as `NativeNetPlatform`. Extending this class (using `extends`) ensures
-/// that the subclass will get the default implementation, while platform
-/// implementations that `implements` this interface will be broken by newly
-/// added [NativeNetPlatform] methods.
-abstract class NativeNetPlatform extends PlatformInterface {
-  NativeNetPlatform() : super(token: _token);
+/// There are two implementations:
+///   - [FfiNativeNetPlatform] – uses libcurl via dart:ffi (native platforms)
+///   - [WebNativeNetPlatform] – uses the Fetch API (web)
+///
+/// The correct implementation is chosen at compile time via conditional
+/// imports in [default_platform.dart].
+///
+/// For testing, you can replace the instance with a mock:
+/// ```dart
+/// NativeNetPlatform.instance = MockPlatform();
+/// ```
+abstract class NativeNetPlatform {
+  NativeNetPlatform();
 
-  static final Object _token = Object();
+  static NativeNetPlatform? _instance;
 
-  static NativeNetPlatform _instance = MethodChannelNativeNet();
-
-  /// The default instance of [NativeNetPlatform] to use.
-  static NativeNetPlatform get instance => _instance;
-
-  /// Platform-specific implementations should set this with their own
-  /// platform-specific class that extends [NativeNetPlatform] when
-  /// they register themselves.
-  static set instance(NativeNetPlatform instance) {
-    PlatformInterface.verifyToken(instance, _token);
-    _instance = instance;
+  /// The current platform implementation.
+  ///
+  /// Defaults to the compile-time-selected implementation (FFI or Web).
+  static NativeNetPlatform get instance {
+    _instance ??= createDefaultPlatform();
+    return _instance!;
   }
 
-  /// Gets the platform version string.
+  /// Replace the platform implementation (useful for testing).
+  static set instance(NativeNetPlatform platform) {
+    _instance = platform;
+  }
+
+  /// Returns a string describing the native backend.
   Future<String?> getPlatformVersion() {
     throw UnimplementedError('getPlatformVersion() has not been implemented.');
   }
 
-  /// Initializes the native HTTP client with the given configuration.
+  /// Initialises the native HTTP client with the given configuration.
   Future<void> initialize(Map<String, dynamic> config) {
     throw UnimplementedError('initialize() has not been implemented.');
   }
 
-  /// Sends an HTTP request and returns the response.
+  /// Sends an HTTP request and returns the response as a map.
   Future<Map<dynamic, dynamic>> request(Map<String, dynamic> requestData) {
     throw UnimplementedError('request() has not been implemented.');
   }
 
-  /// Cancels a request by its tag/identifier.
+  /// Cancels a request identified by [tag].
   Future<void> cancelRequest(String tag) {
     throw UnimplementedError('cancelRequest() has not been implemented.');
   }

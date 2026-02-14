@@ -1,6 +1,5 @@
 import 'dart:convert';
-
-import 'package:flutter/services.dart';
+import 'dart:typed_data';
 
 import '../native_net_platform_interface.dart';
 import 'models/config.dart';
@@ -19,10 +18,11 @@ typedef ResponseInterceptor = Future<NativeNetResponse> Function(
   NativeNetResponse response,
 );
 
-/// The main HTTP client that uses native platform networking frameworks.
+/// The main HTTP client powered by libcurl on native platforms
+/// and the Fetch API on web.
 ///
-/// On Android, this uses OkHttp.
-/// On iOS/macOS, this uses URLSession.
+/// - **Android / iOS / macOS / Linux / Windows**: libcurl via dart:ffi
+/// - **Web**: browser Fetch API
 ///
 /// Usage:
 /// ```dart
@@ -58,7 +58,7 @@ class NativeNetClient {
     _responseInterceptors.add(interceptor);
   }
 
-  /// Ensures the native client is initialized.
+  /// Ensures the native client is initialised.
   Future<void> _ensureInitialized() async {
     if (_closed) {
       throw const NativeNetException(
@@ -72,7 +72,7 @@ class NativeNetClient {
     }
   }
 
-  /// Gets the platform version string (for debugging).
+  /// Returns a string describing the native backend (for debugging).
   Future<String?> getPlatformVersion() {
     return NativeNetPlatform.instance.getPlatformVersion();
   }
@@ -81,7 +81,7 @@ class NativeNetClient {
   ///
   /// This is the core method that all convenience methods delegate to.
   /// It handles request/response interceptors, default headers, and
-  /// error mapping from platform exceptions.
+  /// error mapping.
   Future<NativeNetResponse> request(NativeNetRequest request) async {
     await _ensureInitialized();
 
@@ -91,7 +91,7 @@ class NativeNetClient {
       processedRequest = await interceptor(processedRequest);
     }
 
-    // Merge default headers
+    // Merge default headers with request headers
     final mergedHeaders = <String, String>{};
     if (_config.defaultHeaders != null) {
       mergedHeaders.addAll(_config.defaultHeaders!);
@@ -100,10 +100,28 @@ class NativeNetClient {
       mergedHeaders.addAll(processedRequest.headers!);
     }
 
-    // Build the final request map with merged headers
+    // Build the final request map
     final requestMap = processedRequest.toMap();
     if (mergedHeaders.isNotEmpty) {
       requestMap['headers'] = mergedHeaders;
+    }
+    // Pass verbose flag from config
+    requestMap['verbose'] = _config.enableLogging;
+
+    // Handle multipart body building in Dart
+    // (The C layer receives the body as raw bytes; Dart does the encoding.)
+    if (processedRequest.files != null &&
+        processedRequest.files!.isNotEmpty) {
+      final multipartResult = _buildMultipartBody(
+        processedRequest.formFields,
+        processedRequest.files!,
+      );
+      requestMap['body'] = null;
+      requestMap['bodyBytes'] = multipartResult.bytes;
+      final headers = (requestMap['headers'] as Map<String, String>?) ?? {};
+      headers['Content-Type'] =
+          'multipart/form-data; boundary=${multipartResult.boundary}';
+      requestMap['headers'] = headers;
     }
 
     try {
@@ -116,14 +134,17 @@ class NativeNetClient {
       }
 
       return response;
-    } on PlatformException catch (e) {
-      throw createExceptionFromPlatformError(
-        e.code,
-        e.message,
-        e.details,
+    } on NativeNetException {
+      rethrow;
+    } catch (e) {
+      throw NativeNetException(
+        message: e.toString(),
+        code: 'REQUEST_ERROR',
       );
     }
   }
+
+  // ─── Convenience methods ──────────────────────────────────────────────────
 
   /// Sends a GET request.
   Future<NativeNetResponse> get(
@@ -142,9 +163,6 @@ class NativeNetClient {
   }
 
   /// Sends a POST request with an optional body.
-  ///
-  /// The [body] can be a string (e.g. JSON), and [bodyBytes] can be
-  /// raw binary data. Do not provide both.
   Future<NativeNetResponse> post(
     String url, {
     Map<String, String>? headers,
@@ -167,9 +185,6 @@ class NativeNetClient {
   }
 
   /// Sends a POST request with a JSON body.
-  ///
-  /// Automatically sets Content-Type to application/json and encodes
-  /// the [jsonBody] map/list as a JSON string.
   Future<NativeNetResponse> postJson(
     String url, {
     Map<String, String>? headers,
@@ -343,8 +358,6 @@ class NativeNetClient {
   }
 
   /// Closes the client and releases native resources.
-  ///
-  /// After calling this, no more requests can be made with this client.
   Future<void> close() async {
     if (!_closed) {
       _closed = true;
@@ -353,4 +366,51 @@ class NativeNetClient {
       }
     }
   }
+
+  // ─── Multipart body builder ────────────────────────────────────────────
+
+  _MultipartResult _buildMultipartBody(
+    Map<String, String>? formFields,
+    List<MultipartFile> files,
+  ) {
+    final boundary = 'NativeNet-${DateTime.now().millisecondsSinceEpoch}';
+    final buffer = BytesBuilder();
+    const crlf = '\r\n';
+
+    // Form fields
+    formFields?.forEach((key, value) {
+      buffer.add('--$boundary$crlf'.codeUnits);
+      buffer.add(
+        'Content-Disposition: form-data; name="$key"$crlf$crlf'.codeUnits,
+      );
+      buffer.add('$value$crlf'.codeUnits);
+    });
+
+    // Files
+    for (final file in files) {
+      buffer.add('--$boundary$crlf'.codeUnits);
+      buffer.add(
+        'Content-Disposition: form-data; name="${file.field}"; '
+            'filename="${file.fileName}"$crlf'
+            .codeUnits,
+      );
+      final ct = file.contentType ?? 'application/octet-stream';
+      buffer.add('Content-Type: $ct$crlf$crlf'.codeUnits);
+      buffer.add(file.bytes);
+      buffer.add(crlf.codeUnits);
+    }
+
+    buffer.add('--$boundary--$crlf'.codeUnits);
+
+    return _MultipartResult(
+      bytes: buffer.toBytes(),
+      boundary: boundary,
+    );
+  }
+}
+
+class _MultipartResult {
+  final Uint8List bytes;
+  final String boundary;
+  const _MultipartResult({required this.bytes, required this.boundary});
 }
