@@ -46,6 +46,16 @@ abstract class NativeNetPlatform {
     throw UnimplementedError('request() has not been implemented.');
   }
 
+  /// Downloads a URL to a local file. Returns response metadata (no body).
+  Future<Map<dynamic, dynamic>> downloadFile(Map<String, dynamic> data) {
+    throw UnimplementedError('downloadFile() has not been implemented.');
+  }
+
+  /// Uploads a local file via multipart/form-data.
+  Future<Map<dynamic, dynamic>> uploadFile(Map<String, dynamic> data) {
+    throw UnimplementedError('uploadFile() has not been implemented.');
+  }
+
   /// Cancels a request identified by [tag].
   Future<void> cancelRequest(String tag) {
     throw UnimplementedError('cancelRequest() has not been implemented.');

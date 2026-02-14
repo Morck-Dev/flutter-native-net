@@ -2,11 +2,30 @@ import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
 
-// ─── NativeNetResponse struct (mirrors the C struct) ───────────────────────
+// ─── NativeNetProgress struct ──────────────────────────────────────────────
 
-/// Dart FFI representation of the C `NativeNetResponse` struct.
-///
-/// Layout must match the C definition exactly.
+/// Shared progress struct. Lives in Dart-allocated native memory so
+/// both the main isolate (polling) and the worker isolate (C callback)
+/// can access it.
+final class NativeNetProgressStruct extends Struct {
+  @Int64()
+  external int downloadTotal;
+
+  @Int64()
+  external int downloadNow;
+
+  @Int64()
+  external int uploadTotal;
+
+  @Int64()
+  external int uploadNow;
+
+  @Int32()
+  external int cancelled;
+}
+
+// ─── NativeNetResponse struct ──────────────────────────────────────────────
+
 final class NativeNetResponseStruct extends Struct {
   @Int32()
   external int statusCode;
@@ -42,7 +61,7 @@ typedef NativeNetInitDart = int Function();
 typedef NativeNetCleanupNative = Void Function();
 typedef NativeNetCleanupDart = void Function();
 
-// NativeNetResponse* native_net_request(...)
+// NativeNetResponse* native_net_request(…, NativeNetProgress*)
 typedef NativeNetRequestNative = Pointer<NativeNetResponseStruct> Function(
   Pointer<Utf8> url,
   Pointer<Utf8> method,
@@ -54,8 +73,8 @@ typedef NativeNetRequestNative = Pointer<NativeNetResponseStruct> Function(
   Int32 followRedirects,
   Int64 maxRedirects,
   Int32 verbose,
+  Pointer<NativeNetProgressStruct> progress,
 );
-
 typedef NativeNetRequestDart = Pointer<NativeNetResponseStruct> Function(
   Pointer<Utf8> url,
   Pointer<Utf8> method,
@@ -67,6 +86,65 @@ typedef NativeNetRequestDart = Pointer<NativeNetResponseStruct> Function(
   int followRedirects,
   int maxRedirects,
   int verbose,
+  Pointer<NativeNetProgressStruct> progress,
+);
+
+// NativeNetResponse* native_net_download_file(…)
+typedef NativeNetDownloadNative = Pointer<NativeNetResponseStruct> Function(
+  Pointer<Utf8> url,
+  Pointer<Utf8> headers,
+  Pointer<Utf8> filePath,
+  Int64 connectTimeoutMs,
+  Int64 timeoutMs,
+  Int32 followRedirects,
+  Int64 maxRedirects,
+  Int32 verbose,
+  Pointer<NativeNetProgressStruct> progress,
+);
+typedef NativeNetDownloadDart = Pointer<NativeNetResponseStruct> Function(
+  Pointer<Utf8> url,
+  Pointer<Utf8> headers,
+  Pointer<Utf8> filePath,
+  int connectTimeoutMs,
+  int timeoutMs,
+  int followRedirects,
+  int maxRedirects,
+  int verbose,
+  Pointer<NativeNetProgressStruct> progress,
+);
+
+// NativeNetResponse* native_net_upload_file(…)
+typedef NativeNetUploadNative = Pointer<NativeNetResponseStruct> Function(
+  Pointer<Utf8> url,
+  Pointer<Utf8> method,
+  Pointer<Utf8> headers,
+  Pointer<Utf8> filePath,
+  Pointer<Utf8> fileField,
+  Pointer<Utf8> fileName,
+  Pointer<Utf8> mimeType,
+  Pointer<Utf8> extraFields,
+  Int64 connectTimeoutMs,
+  Int64 timeoutMs,
+  Int32 followRedirects,
+  Int64 maxRedirects,
+  Int32 verbose,
+  Pointer<NativeNetProgressStruct> progress,
+);
+typedef NativeNetUploadDart = Pointer<NativeNetResponseStruct> Function(
+  Pointer<Utf8> url,
+  Pointer<Utf8> method,
+  Pointer<Utf8> headers,
+  Pointer<Utf8> filePath,
+  Pointer<Utf8> fileField,
+  Pointer<Utf8> fileName,
+  Pointer<Utf8> mimeType,
+  Pointer<Utf8> extraFields,
+  int connectTimeoutMs,
+  int timeoutMs,
+  int followRedirects,
+  int maxRedirects,
+  int verbose,
+  Pointer<NativeNetProgressStruct> progress,
 );
 
 // void native_net_free_response(NativeNetResponse*)
@@ -79,11 +157,12 @@ typedef NativeNetFreeResponseDart = void Function(
 
 // ─── Bindings holder ───────────────────────────────────────────────────────
 
-/// Resolved FFI function pointers for the native_net C library.
 class NativeNetBindings {
   final NativeNetInitDart init;
   final NativeNetCleanupDart cleanup;
   final NativeNetRequestDart request;
+  final NativeNetDownloadDart downloadFile;
+  final NativeNetUploadDart uploadFile;
   final NativeNetFreeResponseDart freeResponse;
 
   NativeNetBindings(DynamicLibrary lib)
@@ -97,6 +176,14 @@ class NativeNetBindings {
         request =
             lib.lookupFunction<NativeNetRequestNative, NativeNetRequestDart>(
           'native_net_request',
+        ),
+        downloadFile =
+            lib.lookupFunction<NativeNetDownloadNative, NativeNetDownloadDart>(
+          'native_net_download_file',
+        ),
+        uploadFile =
+            lib.lookupFunction<NativeNetUploadNative, NativeNetUploadDart>(
+          'native_net_upload_file',
         ),
         freeResponse = lib.lookupFunction<NativeNetFreeResponseNative,
             NativeNetFreeResponseDart>(

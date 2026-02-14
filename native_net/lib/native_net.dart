@@ -20,5 +20,6 @@ export 'src/client.dart';
 export 'src/models/config.dart';
 export 'src/models/exceptions.dart';
 export 'src/models/http_method.dart';
+export 'src/models/progress.dart';
 export 'src/models/request.dart';
 export 'src/models/response.dart';

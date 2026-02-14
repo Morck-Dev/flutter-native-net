@@ -132,6 +132,28 @@ class WebNativeNetPlatform extends NativeNetPlatform {
   }
 
   @override
+  Future<Map<dynamic, dynamic>> downloadFile(Map<String, dynamic> data) async {
+    // On web, downloading to a file path is not supported.
+    // Perform a normal GET and return the body bytes so the caller
+    // can handle saving (e.g. via a download link).
+    final requestData = Map<String, dynamic>.from(data);
+    requestData['method'] = 'GET';
+    return request(requestData);
+  }
+
+  @override
+  Future<Map<dynamic, dynamic>> uploadFile(Map<String, dynamic> data) async {
+    // On web, file upload via local path is not supported.
+    // Throw an informative error directing users to use multipart() instead.
+    throw const NativeNetException(
+      message:
+          'uploadFile() with local file paths is not supported on web. '
+          'Use client.multipart() with in-memory file bytes instead.',
+      code: 'UNSUPPORTED_PLATFORM',
+    );
+  }
+
+  @override
   Future<void> cancelRequest(String tag) async {
     // Could use AbortController in a future version.
   }

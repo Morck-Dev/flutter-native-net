@@ -13,18 +13,12 @@ import 'native_library.dart';
 NativeNetPlatform createDefaultPlatform() => FfiNativeNetPlatform();
 
 /// Platform implementation that uses libcurl via dart:ffi.
-///
-/// Each HTTP request is executed in a worker [Isolate] so the
-/// blocking `curl_easy_perform` call never blocks the UI thread.
 class FfiNativeNetPlatform extends NativeNetPlatform {
   bool _globalInitDone = false;
   late final NativeNetBindings _bindings;
 
   @override
-  Future<String?> getPlatformVersion() async {
-    // Return a descriptive string about the native backend.
-    return 'libcurl (native FFI)';
-  }
+  Future<String?> getPlatformVersion() async => 'libcurl (native FFI)';
 
   @override
   Future<void> initialize(Map<String, dynamic> config) async {
@@ -43,18 +37,28 @@ class FfiNativeNetPlatform extends NativeNetPlatform {
   }
 
   @override
-  Future<Map<dynamic, dynamic>> request(
-    Map<String, dynamic> requestData,
-  ) async {
-    // Run the blocking libcurl call inside a worker isolate.
+  Future<Map<dynamic, dynamic>> request(Map<String, dynamic> requestData) async {
     return Isolate.run(() => _executeRequest(requestData));
   }
 
   @override
-  Future<void> cancelRequest(String tag) async {
-    // libcurl easy API does not support async cancellation from another
-    // thread. In a future version we can use the multi API or abort flags.
+  Future<Map<dynamic, dynamic>> downloadFile(
+    Map<String, dynamic> data,
+  ) async {
+    final progressAddr = data['_progressAddr'] as int? ?? 0;
+    return Isolate.run(() => _executeDownload(data, progressAddr));
   }
+
+  @override
+  Future<Map<dynamic, dynamic>> uploadFile(
+    Map<String, dynamic> data,
+  ) async {
+    final progressAddr = data['_progressAddr'] as int? ?? 0;
+    return Isolate.run(() => _executeUpload(data, progressAddr));
+  }
+
+  @override
+  Future<void> cancelRequest(String tag) async {}
 
   @override
   Future<void> dispose() async {
@@ -65,14 +69,12 @@ class FfiNativeNetPlatform extends NativeNetPlatform {
   }
 }
 
-/// Performs the actual libcurl request inside a worker isolate.
-///
-/// This function is self-contained: it opens the native library and looks up
-/// the functions each time. This is safe because [DynamicLibrary.open] is
-/// cached at the OS level (the shared library is loaded once per process).
+// ─── Isolate entry points ─────────────────────────────────────────────────
+
+/// Standard request (body in memory).
 Map<dynamic, dynamic> _executeRequest(Map<String, dynamic> data) {
   final lib = openNativeLibrary();
-  final bindings = NativeNetBindings(lib);
+  final b = NativeNetBindings(lib);
 
   final url = data['url'] as String;
   final method = data['method'] as String;
@@ -84,15 +86,10 @@ Map<dynamic, dynamic> _executeRequest(Map<String, dynamic> data) {
   final followRedirects = (data['followRedirects'] as bool?) ?? true;
   final maxRedirects = (data['maxRedirects'] as num?)?.toInt() ?? 5;
   final verbose = (data['verbose'] as bool?) ?? false;
+  final progressAddr = data['_progressAddr'] as int? ?? 0;
 
-  // Build headers string: "Key: Value\r\nKey: Value\r\n"
-  final headersBuf = StringBuffer();
-  headersMap?.forEach((key, value) {
-    headersBuf.write('$key: $value\r\n');
-  });
-  final headersStr = headersBuf.toString();
+  final headersStr = _buildHeadersString(headersMap);
 
-  // Resolve request body
   Uint8List? resolvedBody;
   if (bodyBytes != null) {
     resolvedBody = bodyBytes;
@@ -100,12 +97,10 @@ Map<dynamic, dynamic> _executeRequest(Map<String, dynamic> data) {
     resolvedBody = Uint8List.fromList(bodyString.codeUnits);
   }
 
-  // Allocate native memory for parameters
   final urlPtr = url.toNativeUtf8();
   final methodPtr = method.toNativeUtf8();
-  final headersPtr = headersStr.isNotEmpty
-      ? headersStr.toNativeUtf8()
-      : nullptr.cast<Utf8>();
+  final headersPtr =
+      headersStr.isNotEmpty ? headersStr.toNativeUtf8() : nullptr.cast<Utf8>();
 
   Pointer<Uint8> bodyPtr = nullptr;
   int bodyLength = 0;
@@ -115,87 +110,188 @@ Map<dynamic, dynamic> _executeRequest(Map<String, dynamic> data) {
     bodyPtr.asTypedList(bodyLength).setAll(0, resolvedBody);
   }
 
-  // Call libcurl (blocking)
-  final responsePtr = bindings.request(
-    urlPtr,
-    methodPtr,
-    headersPtr,
-    bodyPtr,
-    bodyLength,
-    connectTimeout,
-    readTimeout,
-    followRedirects ? 1 : 0,
-    maxRedirects,
-    verbose ? 1 : 0,
+  final progressPtr = progressAddr != 0
+      ? Pointer<NativeNetProgressStruct>.fromAddress(progressAddr)
+      : nullptr.cast<NativeNetProgressStruct>();
+
+  final responsePtr = b.request(
+    urlPtr, methodPtr, headersPtr, bodyPtr, bodyLength,
+    connectTimeout, readTimeout,
+    followRedirects ? 1 : 0, maxRedirects,
+    verbose ? 1 : 0, progressPtr,
   );
 
-  // Free input buffers
   calloc.free(urlPtr);
   calloc.free(methodPtr);
   if (headersStr.isNotEmpty) calloc.free(headersPtr);
   if (bodyPtr != nullptr) calloc.free(bodyPtr);
 
-  // Parse response
+  return _parseResponse(responsePtr, b);
+}
+
+/// Download to file.
+Map<dynamic, dynamic> _executeDownload(
+  Map<String, dynamic> data,
+  int progressAddr,
+) {
+  final lib = openNativeLibrary();
+  final b = NativeNetBindings(lib);
+
+  final url = data['url'] as String;
+  final filePath = data['filePath'] as String;
+  final headersMap = data['headers'] as Map<String, String>?;
+  final connectTimeout = (data['connectTimeout'] as num?)?.toInt() ?? 0;
+  final readTimeout = (data['readTimeout'] as num?)?.toInt() ?? 0;
+  final followRedirects = (data['followRedirects'] as bool?) ?? true;
+  final maxRedirects = (data['maxRedirects'] as num?)?.toInt() ?? 5;
+  final verbose = (data['verbose'] as bool?) ?? false;
+
+  final headersStr = _buildHeadersString(headersMap);
+
+  final urlPtr = url.toNativeUtf8();
+  final headersPtr =
+      headersStr.isNotEmpty ? headersStr.toNativeUtf8() : nullptr.cast<Utf8>();
+  final filePathPtr = filePath.toNativeUtf8();
+  final progressPtr = progressAddr != 0
+      ? Pointer<NativeNetProgressStruct>.fromAddress(progressAddr)
+      : nullptr.cast<NativeNetProgressStruct>();
+
+  final responsePtr = b.downloadFile(
+    urlPtr, headersPtr, filePathPtr,
+    connectTimeout, readTimeout,
+    followRedirects ? 1 : 0, maxRedirects,
+    verbose ? 1 : 0, progressPtr,
+  );
+
+  calloc.free(urlPtr);
+  if (headersStr.isNotEmpty) calloc.free(headersPtr);
+  calloc.free(filePathPtr);
+
+  return _parseResponse(responsePtr, b);
+}
+
+/// Upload file (multipart).
+Map<dynamic, dynamic> _executeUpload(
+  Map<String, dynamic> data,
+  int progressAddr,
+) {
+  final lib = openNativeLibrary();
+  final b = NativeNetBindings(lib);
+
+  final url = data['url'] as String;
+  final method = (data['method'] as String?) ?? 'POST';
+  final headersMap = data['headers'] as Map<String, String>?;
+  final filePath = data['filePath'] as String;
+  final fileField = (data['fileField'] as String?) ?? 'file';
+  final fileName = data['fileName'] as String?;
+  final mimeType = data['mimeType'] as String?;
+  final extraFields = data['extraFields'] as String?;
+  final connectTimeout = (data['connectTimeout'] as num?)?.toInt() ?? 0;
+  final readTimeout = (data['readTimeout'] as num?)?.toInt() ?? 0;
+  final followRedirects = (data['followRedirects'] as bool?) ?? true;
+  final maxRedirects = (data['maxRedirects'] as num?)?.toInt() ?? 5;
+  final verbose = (data['verbose'] as bool?) ?? false;
+
+  final headersStr = _buildHeadersString(headersMap);
+
+  final urlPtr = url.toNativeUtf8();
+  final methodPtr = method.toNativeUtf8();
+  final headersPtr =
+      headersStr.isNotEmpty ? headersStr.toNativeUtf8() : nullptr.cast<Utf8>();
+  final filePathPtr = filePath.toNativeUtf8();
+  final fileFieldPtr = fileField.toNativeUtf8();
+  final fileNamePtr =
+      fileName != null ? fileName.toNativeUtf8() : nullptr.cast<Utf8>();
+  final mimeTypePtr =
+      mimeType != null ? mimeType.toNativeUtf8() : nullptr.cast<Utf8>();
+  final extraFieldsPtr =
+      extraFields != null ? extraFields.toNativeUtf8() : nullptr.cast<Utf8>();
+  final progressPtr = progressAddr != 0
+      ? Pointer<NativeNetProgressStruct>.fromAddress(progressAddr)
+      : nullptr.cast<NativeNetProgressStruct>();
+
+  final responsePtr = b.uploadFile(
+    urlPtr, methodPtr, headersPtr,
+    filePathPtr, fileFieldPtr, fileNamePtr, mimeTypePtr, extraFieldsPtr,
+    connectTimeout, readTimeout,
+    followRedirects ? 1 : 0, maxRedirects,
+    verbose ? 1 : 0, progressPtr,
+  );
+
+  calloc.free(urlPtr);
+  calloc.free(methodPtr);
+  if (headersStr.isNotEmpty) calloc.free(headersPtr);
+  calloc.free(filePathPtr);
+  calloc.free(fileFieldPtr);
+  if (fileName != null) calloc.free(fileNamePtr);
+  if (mimeType != null) calloc.free(mimeTypePtr);
+  if (extraFields != null) calloc.free(extraFieldsPtr);
+
+  return _parseResponse(responsePtr, b);
+}
+
+// ─── Shared helpers ───────────────────────────────────────────────────────
+
+String _buildHeadersString(Map<String, String>? headersMap) {
+  if (headersMap == null || headersMap.isEmpty) return '';
+  final buf = StringBuffer();
+  headersMap.forEach((k, v) => buf.write('$k: $v\r\n'));
+  return buf.toString();
+}
+
+Map<dynamic, dynamic> _parseResponse(
+  Pointer<NativeNetResponseStruct> responsePtr,
+  NativeNetBindings b,
+) {
   if (responsePtr == nullptr) {
     throw const NativeNetException(
-      message: 'native_net_request returned NULL',
+      message: 'native_net returned NULL',
       code: 'INTERNAL_ERROR',
     );
   }
 
   final ref = responsePtr.ref;
-  final curlCode = ref.curlCode;
 
-  if (curlCode != 0) {
-    // Request failed at the libcurl level
-    final errorMsg = ref.errorMessage != nullptr
+  if (ref.curlCode != 0) {
+    final msg = ref.errorMessage != nullptr
         ? ref.errorMessage.toDartString()
-        : 'Unknown curl error (code $curlCode)';
-    bindings.freeResponse(responsePtr);
-
-    // Map curl error codes to our error types
-    final errorCode = _mapCurlError(curlCode);
-    throw createExceptionFromPlatformError(errorCode, errorMsg, null);
+        : 'curl error (code ${ref.curlCode})';
+    b.freeResponse(responsePtr);
+    throw createExceptionFromPlatformError(
+      _mapCurlError(ref.curlCode), msg, null,
+    );
   }
 
-  // Read response data
   final statusCode = ref.statusCode;
   final totalTimeMs = ref.totalTimeMs;
 
-  // Read body bytes
   Uint8List responseBodyBytes;
   if (ref.body != nullptr && ref.bodyLength > 0) {
-    responseBodyBytes = Uint8List.fromList(
-      ref.body.asTypedList(ref.bodyLength),
-    );
+    responseBodyBytes =
+        Uint8List.fromList(ref.body.asTypedList(ref.bodyLength));
   } else {
     responseBodyBytes = Uint8List(0);
   }
 
-  // Read headers
   final responseHeaders = <String, String>{};
   if (ref.headers != nullptr && ref.headersLength > 0) {
-    final rawHeaders = ref.headers.toDartString();
-    for (final line in rawHeaders.split('\r\n')) {
-      final colonIdx = line.indexOf(':');
-      if (colonIdx > 0) {
-        final key = line.substring(0, colonIdx).trim();
-        final value = line.substring(colonIdx + 1).trim();
-        responseHeaders[key.toLowerCase()] = value;
+    final raw = ref.headers.toDartString();
+    for (final line in raw.split('\r\n')) {
+      final idx = line.indexOf(':');
+      if (idx > 0) {
+        responseHeaders[line.substring(0, idx).trim().toLowerCase()] =
+            line.substring(idx + 1).trim();
       }
     }
   }
 
-  // Read effective URL
   String? effectiveUrl;
   if (ref.effectiveUrl != nullptr) {
     effectiveUrl = ref.effectiveUrl.toDartString();
   }
 
-  // Free native response
-  bindings.freeResponse(responsePtr);
+  b.freeResponse(responsePtr);
 
-  // Return as a map (same format as the old MethodChannel approach)
   return {
     'statusCode': statusCode,
     'headers': responseHeaders,
@@ -207,64 +303,32 @@ Map<dynamic, dynamic> _executeRequest(Map<String, dynamic> data) {
   };
 }
 
-/// Maps libcurl CURLcode values to our error code strings.
 String _mapCurlError(int curlCode) {
-  // See https://curl.se/libcurl/c/libcurl-errors.html
   switch (curlCode) {
-    case 6:  // CURLE_COULDNT_RESOLVE_HOST
-    case 7:  // CURLE_COULDNT_CONNECT
-    case 9:  // CURLE_REMOTE_ACCESS_DENIED
-    case 45: // CURLE_INTERFACE_FAILED
-    case 55: // CURLE_SEND_ERROR
-    case 56: // CURLE_RECV_ERROR
+    case 6: case 7: case 9: case 45: case 55: case 56:
       return 'CONNECTION_ERROR';
-    case 28: // CURLE_OPERATION_TIMEDOUT
+    case 28:
       return 'TIMEOUT';
-    case 35: // CURLE_SSL_CONNECT_ERROR
-    case 51: // CURLE_PEER_FAILED_VERIFICATION
-    case 53: // CURLE_SSL_ENGINE_NOTFOUND
-    case 54: // CURLE_SSL_ENGINE_SETFAILED
-    case 58: // CURLE_SSL_CERTPROBLEM
-    case 59: // CURLE_SSL_CIPHER
-    case 60: // CURLE_SSL_CACERT
-    case 64: // CURLE_USE_SSL_FAILED
-    case 66: // CURLE_SSL_ENGINE_INITFAILED
-    case 77: // CURLE_SSL_CACERT_BADFILE
-    case 82: // CURLE_SSL_CRL_BADFILE
-    case 83: // CURLE_SSL_ISSUER_ERROR
-    case 90: // CURLE_SSL_PINNEDPUBKEYNOTMATCH
-    case 91: // CURLE_SSL_INVALIDCERTSTATUS
+    case 35: case 51: case 53: case 54: case 58: case 59:
+    case 60: case 64: case 66: case 77: case 82: case 83:
+    case 90: case 91:
       return 'CERTIFICATE_ERROR';
-    case 42: // CURLE_ABORTED_BY_CALLBACK
+    case 42:
       return 'CANCELLED';
     default:
       return 'REQUEST_ERROR';
   }
 }
 
-/// Returns a standard HTTP reason phrase for common status codes.
-String _httpReasonPhrase(int statusCode) {
-  switch (statusCode) {
-    case 200: return 'OK';
-    case 201: return 'Created';
-    case 202: return 'Accepted';
-    case 204: return 'No Content';
-    case 301: return 'Moved Permanently';
-    case 302: return 'Found';
-    case 304: return 'Not Modified';
-    case 400: return 'Bad Request';
-    case 401: return 'Unauthorized';
-    case 403: return 'Forbidden';
-    case 404: return 'Not Found';
-    case 405: return 'Method Not Allowed';
-    case 408: return 'Request Timeout';
-    case 409: return 'Conflict';
-    case 422: return 'Unprocessable Entity';
-    case 429: return 'Too Many Requests';
-    case 500: return 'Internal Server Error';
-    case 502: return 'Bad Gateway';
-    case 503: return 'Service Unavailable';
-    case 504: return 'Gateway Timeout';
-    default:  return '';
-  }
+String _httpReasonPhrase(int code) {
+  const phrases = {
+    200: 'OK', 201: 'Created', 204: 'No Content',
+    301: 'Moved Permanently', 302: 'Found', 304: 'Not Modified',
+    400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden',
+    404: 'Not Found', 405: 'Method Not Allowed', 409: 'Conflict',
+    422: 'Unprocessable Entity', 429: 'Too Many Requests',
+    500: 'Internal Server Error', 502: 'Bad Gateway',
+    503: 'Service Unavailable', 504: 'Gateway Timeout',
+  };
+  return phrases[code] ?? '';
 }
