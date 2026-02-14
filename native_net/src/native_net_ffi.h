@@ -11,26 +11,115 @@
 #define FFI_PLUGIN_EXPORT __attribute__((visibility("default"))) __attribute__((used))
 #endif
 
-/* ── Progress struct (shared between Dart main isolate & C) ── */
+/* ── Progress / cancellation struct ────────────────────────── */
 typedef struct {
-    int64_t download_total;   /* Total bytes to download (0 if unknown) */
-    int64_t download_now;     /* Bytes downloaded so far                */
-    int64_t upload_total;     /* Total bytes to upload   (0 if unknown) */
-    int64_t upload_now;       /* Bytes uploaded so far                  */
-    int32_t cancelled;        /* Set to 1 from Dart to abort transfer  */
+    int64_t download_total;
+    int64_t download_now;
+    int64_t upload_total;
+    int64_t upload_now;
+    int32_t cancelled;        /* set to 1 from Dart to abort */
+    int32_t _pad0;
 } NativeNetProgress;
 
-/* ── Response struct returned to Dart via FFI ──────────────── */
+/* ── Request options (comprehensive) ───────────────────────── */
+/*
+ * A single struct that carries **all** request parameters.
+ * Zeroed memory gives safe defaults for every field.
+ *
+ * FIELD DEFAULTS (when memory is zeroed / 0):
+ *   ssl_verify_peer = 0  → we treat 0 as "use default (verify)"
+ *   ssl_verify_host = 0  → we treat 0 as "use default (verify)"
+ *   To explicitly disable, set ssl_verify_peer = -1 or ssl_verify_host = -1.
+ *
+ * NOTE: The field order MUST match the Dart FFI struct exactly.
+ */
 typedef struct {
-    int32_t  status_code;       /* HTTP status code (200, 404, …)     */
-    char*    headers;           /* Raw headers "Key: Val\r\n…"        */
-    int64_t  headers_length;    /* Byte length of headers string      */
-    uint8_t* body;              /* Response body bytes                 */
-    int64_t  body_length;       /* Byte length of body                */
-    char*    error_message;     /* Human-readable error (NULL if ok)  */
-    char*    effective_url;     /* Final URL after redirects          */
-    double   total_time_ms;     /* Total request time in milliseconds */
-    int32_t  curl_code;         /* libcurl CURLcode (0 = CURLE_OK)    */
+    /* ── Required ─────────────────────────────────────── */
+    const char*    url;
+    const char*    method;            /* "GET","POST",…            */
+    const char*    headers;           /* "K: V\r\n…" or NULL       */
+    const uint8_t* body;
+    int64_t        body_length;
+
+    /* ── Timeouts (ms, 0 = no limit) ──────────────────── */
+    int64_t        connect_timeout_ms;
+    int64_t        timeout_ms;
+
+    /* ── Redirects ────────────────────────────────────── */
+    int64_t        max_redirects;     /* 0 = default (50)          */
+    int32_t        follow_redirects;  /* 1=follow, 0=don't, -1=default */
+
+    /* ── TLS / SSL ────────────────────────────────────── */
+    int32_t        ssl_verify_peer;   /*  1=verify, -1=skip, 0=default(verify)  */
+    int32_t        ssl_verify_host;   /*  2=verify, -1=skip, 0=default(verify)  */
+    int32_t        _pad1;
+    const char*    ca_info;           /* path to CA bundle file    */
+    const char*    ca_path;           /* path to CA directory      */
+    const char*    client_cert;       /* path to client cert       */
+    const char*    client_key;        /* path to client priv key   */
+    const char*    client_cert_type;  /* "PEM" (default) or "DER"  */
+    const char*    pinned_public_key; /* "sha256//base64…"         */
+
+    /* ── Proxy ────────────────────────────────────────── */
+    const char*    proxy;             /* "http://host:port"        */
+    const char*    proxy_userpwd;     /* "user:pass"               */
+    int32_t        proxy_type;        /* 0=HTTP,4=SOCKS4,5=SOCKS5  */
+    int32_t        http_proxy_tunnel; /* 1=tunnel through proxy    */
+
+    /* ── HTTP Auth ────────────────────────────────────── */
+    const char*    userpwd;           /* "user:pass"               */
+    int64_t        http_auth;         /* CURLAUTH bitmask          */
+
+    /* ── Cookies ──────────────────────────────────────── */
+    const char*    cookie;            /* "name=val; name2=val2"    */
+    const char*    cookie_file;       /* read cookies from file    */
+    const char*    cookie_jar;        /* write cookies to file     */
+
+    /* ── HTTP version ─────────────────────────────────── */
+    int32_t        http_version;      /* 0=auto,1=1.0,2=1.1,3=H2,4=H3 */
+
+    /* ── Speed limits (bytes/sec, 0 = unlimited) ──────── */
+    int32_t        _pad2;
+    int64_t        max_recv_speed;
+    int64_t        max_send_speed;
+
+    /* ── Resume / Range ───────────────────────────────── */
+    int64_t        resume_from;       /* byte offset to resume     */
+    const char*    range;             /* "0-499" or NULL           */
+
+    /* ── User-Agent ───────────────────────────────────── */
+    const char*    user_agent;
+
+    /* ── DNS ──────────────────────────────────────────── */
+    const char*    dns_servers;       /* "1.1.1.1,8.8.8.8"        */
+    const char*    resolve;           /* "host:port:addr,…"        */
+
+    /* ── File ops (download / upload) ─────────────────── */
+    const char*    file_path;         /* download dest / upload src */
+    const char*    file_field;        /* upload: form field name   */
+    const char*    file_name;         /* upload: display filename  */
+    const char*    mime_type;         /* upload: MIME type          */
+    const char*    extra_fields;      /* upload: "k=v\nk=v\n"     */
+
+    /* ── Misc ─────────────────────────────────────────── */
+    int32_t        verbose;
+    int32_t        _pad3;
+    NativeNetProgress* progress;
+} NativeNetRequestOptions;
+
+/* ── Response struct ───────────────────────────────────────── */
+typedef struct {
+    int32_t  status_code;
+    int32_t  _pad0;
+    char*    headers;
+    int64_t  headers_length;
+    uint8_t* body;
+    int64_t  body_length;
+    char*    error_message;
+    char*    effective_url;
+    double   total_time_ms;
+    int32_t  curl_code;
+    int32_t  _pad1;
 } NativeNetResponse;
 
 #ifdef __cplusplus
@@ -38,90 +127,23 @@ extern "C" {
 #endif
 
 /* ── Global init / cleanup ─────────────────────────────────── */
-
 FFI_PLUGIN_EXPORT int32_t native_net_init(void);
 FFI_PLUGIN_EXPORT void    native_net_cleanup(void);
 
-/* ── Perform a request (blocking – call from a worker isolate) */
-
-/**
- * Performs a standard HTTP request using libcurl's easy API.
- * The response body is collected in memory.
- *
- * @param progress  Optional pointer to a progress struct. If non-NULL,
- *                  it is updated during transfer and checked for
- *                  cancellation. The struct lives in Dart-allocated
- *                  native memory shared across isolates.
- */
+/* ── Request (body in memory) ──────────────────────────────── */
 FFI_PLUGIN_EXPORT NativeNetResponse* native_net_request(
-    const char*       url,
-    const char*       method,
-    const char*       headers,
-    const uint8_t*    body,
-    int64_t           body_length,
-    int64_t           connect_timeout_ms,
-    int64_t           timeout_ms,
-    int32_t           follow_redirects,
-    int64_t           max_redirects,
-    int32_t           verbose,
-    NativeNetProgress* progress
-);
+    const NativeNetRequestOptions* opts);
 
 /* ── Download to file ──────────────────────────────────────── */
-
-/**
- * Downloads a URL directly to a local file.
- * The response body is NOT stored in the returned struct (body will
- * be NULL and body_length will be 0). Headers, status code, timing
- * etc. are still populated.
- */
 FFI_PLUGIN_EXPORT NativeNetResponse* native_net_download_file(
-    const char*       url,
-    const char*       headers,
-    const char*       file_path,
-    int64_t           connect_timeout_ms,
-    int64_t           timeout_ms,
-    int32_t           follow_redirects,
-    int64_t           max_redirects,
-    int32_t           verbose,
-    NativeNetProgress* progress
-);
+    const NativeNetRequestOptions* opts);
 
-/* ── Upload file (multipart/form-data) ─────────────────────── */
-
-/**
- * Uploads a local file as a multipart/form-data POST request.
- * Uses curl_mime so the file is streamed from disk – never loaded
- * entirely into memory.
- *
- * @param file_path       Local path to the file to upload.
- * @param file_field      Form field name (e.g. "file").
- * @param file_name       Display name sent in Content-Disposition (or NULL
- *                        to use the file_path basename).
- * @param mime_type       MIME type (e.g. "image/jpeg"), or NULL for auto.
- * @param extra_fields    Additional form fields as "key=val\nkey=val\n",
- *                        or NULL.
- */
+/* ── Upload file (multipart) ──────────────────────────────── */
 FFI_PLUGIN_EXPORT NativeNetResponse* native_net_upload_file(
-    const char*       url,
-    const char*       method,
-    const char*       headers,
-    const char*       file_path,
-    const char*       file_field,
-    const char*       file_name,
-    const char*       mime_type,
-    const char*       extra_fields,
-    int64_t           connect_timeout_ms,
-    int64_t           timeout_ms,
-    int32_t           follow_redirects,
-    int64_t           max_redirects,
-    int32_t           verbose,
-    NativeNetProgress* progress
-);
+    const NativeNetRequestOptions* opts);
 
-/* ── Free a response ───────────────────────────────────────── */
-
-FFI_PLUGIN_EXPORT void native_net_free_response(NativeNetResponse* response);
+/* ── Free response ─────────────────────────────────────────── */
+FFI_PLUGIN_EXPORT void native_net_free_response(NativeNetResponse* r);
 
 #ifdef __cplusplus
 }
