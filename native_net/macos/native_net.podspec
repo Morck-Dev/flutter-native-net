@@ -17,7 +17,7 @@ so the plugin has zero runtime dependencies on the host system.
 
   s.source_files     = 'Classes/**/*.{c,h}'
   s.dependency 'FlutterMacOS'
-  s.platform         = :osx, '10.14'
+  s.platform         = :osx, '10.11'
 
   # Build libcurl from source before compiling the plugin
   s.script_phase = {

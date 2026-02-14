@@ -13,7 +13,7 @@ set -euo pipefail
 
 CURL_VERSION="8.11.1"
 CURL_URL="https://github.com/curl/curl/releases/download/curl-8_11_1/curl-${CURL_VERSION}.tar.gz"
-MIN_MACOS_VERSION="10.14"
+MIN_MACOS_VERSION="10.11"
 
 OUTPUT_DIR="${1:-$(dirname "$0")/../macos/Frameworks/curl-macos}"
 BUILD_DIR="/tmp/native_net_curl_macos_build_$$"

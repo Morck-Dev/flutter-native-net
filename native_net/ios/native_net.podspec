@@ -17,7 +17,7 @@ libcurl is built from source with Secure Transport as the TLS backend.
 
   s.source_files     = 'Classes/**/*.{c,h}'
   s.dependency 'Flutter'
-  s.platform         = :ios, '12.0'
+  s.platform         = :ios, '9.0'
 
   # Header search path so native_net_ffi.c can find <curl/curl.h>
   # The build_curl_ios.sh script outputs to ios/Frameworks/curl-ios/

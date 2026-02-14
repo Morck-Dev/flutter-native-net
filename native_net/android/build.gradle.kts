@@ -50,7 +50,7 @@ android {
     }
 
     defaultConfig {
-        minSdk = 24
+        minSdk = 21
 
         // NDK / CMake build for the native_net FFI library (libcurl wrapper)
         externalNativeBuild {

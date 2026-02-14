@@ -3,7 +3,7 @@ description: >
   A Flutter plugin for native HTTP networking powered by libcurl.
   Uses libcurl via dart:ffi on Android, iOS, macOS, Linux, Windows
   and falls back to the browser Fetch API on web.
-version: 0.2.0
+version: 0.3.0
 homepage: https://github.com/example/flutter-native-net
 repository: https://github.com/example/flutter-native-net
 

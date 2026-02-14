@@ -17,7 +17,7 @@ set -euo pipefail
 
 CURL_VERSION="8.11.1"
 CURL_URL="https://github.com/curl/curl/releases/download/curl-8_11_1/curl-${CURL_VERSION}.tar.gz"
-MIN_IOS_VERSION="12.0"
+MIN_IOS_VERSION="9.0"
 
 OUTPUT_DIR="${1:-$(dirname "$0")/../ios/Frameworks/curl-ios}"
 BUILD_DIR="/tmp/native_net_curl_build_$$"
