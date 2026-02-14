@@ -51,6 +51,24 @@ android {
 
     defaultConfig {
         minSdk = 24
+
+        // NDK / CMake build for the native_net FFI library (libcurl wrapper)
+        externalNativeBuild {
+            cmake {
+                // Build libcurl with mbedTLS for Android TLS support
+                arguments("-DANDROID_STL=c++_shared")
+            }
+        }
+
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("../src/CMakeLists.txt")
+        }
     }
 
     testOptions {
@@ -58,9 +76,7 @@ android {
             isIncludeAndroidResources = true
             all {
                 it.useJUnitPlatform()
-
                 it.outputs.upToDateWhen { false }
-
                 it.testLogging {
                     events("passed", "skipped", "failed", "standardOut", "standardError")
                     showStandardStreams = true
@@ -71,8 +87,6 @@ android {
 }
 
 dependencies {
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
 }
