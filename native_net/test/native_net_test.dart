@@ -37,6 +37,41 @@ class MockNativeNetPlatform extends NativeNetPlatform {
     };
   }
 
+  Map<String, dynamic>? lastDownload;
+  Map<String, dynamic>? lastUpload;
+
+  @override
+  Future<Map<dynamic, dynamic>> downloadFile(
+    Map<String, dynamic> data,
+  ) async {
+    lastDownload = data;
+    return {
+      'statusCode': 200,
+      'headers': {'content-type': 'application/octet-stream'},
+      'bodyBytes': Uint8List(0),
+      'reasonPhrase': 'OK',
+      'contentLength': 0,
+      'duration': 500,
+      'finalUrl': data['url'],
+    };
+  }
+
+  @override
+  Future<Map<dynamic, dynamic>> uploadFile(
+    Map<String, dynamic> data,
+  ) async {
+    lastUpload = data;
+    return {
+      'statusCode': 200,
+      'headers': {'content-type': 'application/json'},
+      'bodyBytes': Uint8List.fromList('{"id":1}'.codeUnits),
+      'reasonPhrase': 'OK',
+      'contentLength': 8,
+      'duration': 300,
+      'finalUrl': data['url'],
+    };
+  }
+
   @override
   Future<void> cancelRequest(String tag) async {}
 
@@ -226,6 +261,44 @@ void main() {
       await verboseClient.get('https://api.example.com/data');
       expect(mockPlatform.lastRequest?['verbose'], isTrue);
       await verboseClient.close();
+    });
+
+    test('downloadFile sends correct data to platform', () async {
+      final response = await client.downloadFile(
+        'https://example.com/file.zip',
+        '/tmp/file.zip',
+        headers: {'Accept': '*/*'},
+      );
+
+      expect(mockPlatform.lastDownload?['url'], 'https://example.com/file.zip');
+      expect(mockPlatform.lastDownload?['filePath'], '/tmp/file.zip');
+      expect(response.statusCode, 200);
+    });
+
+    test('uploadFile sends correct data to platform', () async {
+      final response = await client.uploadFile(
+        'https://example.com/upload',
+        '/tmp/photo.jpg',
+        fieldName: 'photo',
+        fileName: 'my_photo.jpg',
+        contentType: 'image/jpeg',
+        formFields: {'album': 'vacation'},
+      );
+
+      expect(mockPlatform.lastUpload?['url'], 'https://example.com/upload');
+      expect(mockPlatform.lastUpload?['filePath'], '/tmp/photo.jpg');
+      expect(mockPlatform.lastUpload?['fileField'], 'photo');
+      expect(mockPlatform.lastUpload?['fileName'], 'my_photo.jpg');
+      expect(mockPlatform.lastUpload?['mimeType'], 'image/jpeg');
+      expect(mockPlatform.lastUpload?['extraFields'], contains('album=vacation'));
+      expect(response.statusCode, 200);
+    });
+
+    test('CancelToken starts uncancelled', () {
+      final token = CancelToken();
+      expect(token.isCancelled, isFalse);
+      token.cancel();
+      expect(token.isCancelled, isTrue);
     });
   });
 

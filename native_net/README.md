@@ -15,18 +15,20 @@ native dependency to maintain.
 │                    dart:ffi bridge                    │
 ├─────────┬─────────┬───────┬───────┬──────┬───────────┤
 │ Android │   iOS   │ macOS │ Linux │ Win  │    Web    │
-│  (NDK)  │(SecTrsp)│(sys)  │(sys)  │(Sch) │(Fetch API)│
+│(mbedTLS)│(SecTrsp)│(SecTr)│(mbdTL)│(Sch) │(Fetch API)│
 │         │         │       │       │      │           │
-│    libcurl + mbedTLS / SecureTransport / Schannel    │
+│         libcurl (always built from source)           │
 └─────────┴─────────┴───────┴───────┴──────┴───────────┘
 ```
+
+libcurl is **always built from source** — zero dependency on the host system.
 
 | Platform | TLS Backend | libcurl Source |
 |----------|-------------|----------------|
 | **Android** | mbedTLS (auto-built) | CMake FetchContent |
 | **iOS** | Secure Transport | Build script |
-| **macOS** | Secure Transport | System `/usr/lib/libcurl.dylib` |
-| **Linux** | OpenSSL | System `libcurl.so` |
+| **macOS** | Secure Transport | Build script |
+| **Linux** | mbedTLS (auto-built) | CMake FetchContent |
 | **Windows** | Schannel | CMake FetchContent |
 | **Web** | Browser TLS | N/A (Fetch API fallback) |
 
@@ -53,8 +55,8 @@ dependencies:
 
 ### Platform-specific setup
 
-**Android, macOS, Linux, Windows** — no extra setup needed. libcurl is either
-already on the system or is built automatically during the first Flutter build.
+**Android, Linux, Windows** — no extra setup needed! libcurl and mbedTLS are
+built automatically from source during the first Flutter build.
 
 **iOS** — run the build script once before the first build:
 
@@ -63,12 +65,15 @@ cd native_net
 bash scripts/build_curl_ios.sh
 ```
 
-**Linux** — ensure system libcurl is installed:
+**macOS** — run the build script once before the first build:
 
 ```bash
-sudo apt install libcurl4-openssl-dev   # Debian/Ubuntu
-sudo dnf install libcurl-devel          # Fedora
+cd native_net
+bash scripts/build_curl_macos.sh
 ```
+
+> The first build takes a few extra minutes to compile libcurl from source.
+> Subsequent builds are cached and fast.
 
 ## Quick Start
 
@@ -177,6 +182,56 @@ client.addResponseInterceptor((response) async {
   return response;
 });
 ```
+
+### File Download
+
+```dart
+final token = CancelToken();
+
+final response = await client.downloadFile(
+  'https://example.com/large.zip',
+  '/path/to/save/large.zip',
+  onProgress: (received, total) {
+    if (total > 0) {
+      print('${(received / total * 100).toStringAsFixed(1)}%');
+    }
+  },
+  cancelToken: token,
+);
+
+// To cancel mid-download:
+// token.cancel();
+```
+
+Features:
+- Streams directly to disk — supports arbitrarily large files
+- Progress callback with bytes received and total size
+- Cancellation via `CancelToken`
+- Partial files are automatically deleted on error
+
+### File Upload
+
+```dart
+final response = await client.uploadFile(
+  'https://example.com/upload',
+  '/path/to/photo.jpg',
+  fieldName: 'photo',
+  fileName: 'my_photo.jpg',
+  contentType: 'image/jpeg',
+  formFields: {'album': 'vacation', 'description': 'Beach day'},
+  onProgress: (sent, total) {
+    if (total > 0) {
+      print('${(sent / total * 100).toStringAsFixed(1)}%');
+    }
+  },
+);
+```
+
+Features:
+- Uses libcurl's `curl_mime` API — file is streamed from disk, never loaded into memory
+- Multipart/form-data with additional form fields
+- Progress callback with bytes sent and total size
+- Cancellation via `CancelToken`
 
 ### Error Handling
 
