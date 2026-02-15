@@ -4,7 +4,7 @@
 # ALWAYS builds libcurl from source via FetchContent so that the plugin
 # works regardless of whether the host system has libcurl installed.
 #
-# TLS backend per platform (all use system-level TLS, no OpenSSL needed):
+# TLS backend per platform:
 #   Android  -> mbedTLS      (built from source alongside curl)
 #   Linux    -> mbedTLS      (built from source, zero system dependency)
 #   Windows  -> Schannel     (provided by the OS)
@@ -17,10 +17,7 @@ project(native_net VERSION 0.3.0 LANGUAGES C)
 
 include(FetchContent)
 
-# Prevent curl's INSTALL target from being built (fixes MSVC INSTALL.vcxproj error)
-set(CMAKE_SKIP_INSTALL_RULES TRUE)
-
-# === mbedTLS (for Android & Linux which need a bundled TLS library) =======
+# === mbedTLS (for Android & Linux) ========================================
 
 if(ANDROID OR (UNIX AND NOT APPLE))
     message(STATUS "[native_net] Building mbedTLS from source for TLS ...")
@@ -32,7 +29,13 @@ if(ANDROID OR (UNIX AND NOT APPLE))
         URL      https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.2/mbedtls-3.6.2.tar.bz2
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
-    FetchContent_MakeAvailable(mbedtls)
+    # Use manual populate + EXCLUDE_FROM_ALL to prevent mbedtls
+    # install() targets from interfering with the build.
+    FetchContent_GetProperties(mbedtls)
+    if(NOT mbedtls_POPULATED)
+        FetchContent_Populate(mbedtls)
+        add_subdirectory(${mbedtls_SOURCE_DIR} ${mbedtls_BINARY_DIR} EXCLUDE_FROM_ALL)
+    endif()
 endif()
 
 # === libcurl (always built from source) ===================================
@@ -45,7 +48,7 @@ set(BUILD_TESTING        OFF CACHE BOOL "" FORCE)
 set(HTTP_ONLY             ON CACHE BOOL "" FORCE)   # only HTTP(S)
 set(CURL_DISABLE_LDAP    ON CACHE BOOL "" FORCE)
 set(CURL_DISABLE_LDAPS   ON CACHE BOOL "" FORCE)
-set(CURL_USE_LIBPSL      OFF CACHE BOOL "" FORCE)   # disable libpsl (not needed)
+set(CURL_USE_LIBPSL      OFF CACHE BOOL "" FORCE)   # no libpsl needed
 
 # TLS backend selection
 if(ANDROID OR (UNIX AND NOT APPLE))
@@ -68,7 +71,16 @@ FetchContent_Declare(
     URL      https://github.com/curl/curl/releases/download/curl-8_11_1/curl-8.11.1.tar.gz
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
-FetchContent_MakeAvailable(curl)
+
+# CRITICAL: Use manual populate + EXCLUDE_FROM_ALL so that curl's
+# install() targets are NOT added to the default build.
+# Without this, the INSTALL.vcxproj target fails on Windows because
+# Flutter's MSVC build triggers it without proper install permissions.
+FetchContent_GetProperties(curl)
+if(NOT curl_POPULATED)
+    FetchContent_Populate(curl)
+    add_subdirectory(${curl_SOURCE_DIR} ${curl_BINARY_DIR} EXCLUDE_FROM_ALL)
+endif()
 
 set(CURL_TARGETS libcurl_static)
 set(CURL_INCLUDE_DIRS
@@ -92,7 +104,7 @@ target_link_libraries(native_net PRIVATE ${CURL_TARGETS})
 # Suppress MSVC warnings in our code
 if(MSVC)
     target_compile_definitions(native_net PRIVATE
-        _CRT_SECURE_NO_WARNINGS     # disable strdup/fopen deprecation
+        _CRT_SECURE_NO_WARNINGS
     )
 endif()
 
