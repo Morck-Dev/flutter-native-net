@@ -1,5 +1,5 @@
 /*
- * native_net_ffi.c  –  Comprehensive libcurl wrapper for Flutter FFI
+ * native_net_ffi.c - Comprehensive libcurl wrapper for Flutter FFI
  *
  * Exposes ~80% of libcurl's commonly-used options including:
  *   TLS/SSL control, proxy, cookies, HTTP auth, HTTP version,
@@ -13,8 +13,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ── Portable strndup ──────────────────────────────────────── */
+/* -- Portable string helpers for MSVC ------------------------------------ */
 #if defined(_MSC_VER)
+#pragma warning(disable: 4996)  /* disable strdup deprecation warning */
 static char* nn_strndup(const char* s, size_t n) {
     size_t len = 0;
     while (len < n && s[len]) ++len;
@@ -26,7 +27,7 @@ static char* nn_strndup(const char* s, size_t n) {
 #define nn_strndup strndup
 #endif
 
-/* ── Dynamic buffer ────────────────────────────────────────── */
+/* -- Dynamic buffer ------------------------------------------------------ */
 typedef struct { uint8_t* data; size_t size; size_t cap; } Buf;
 
 static void buf_init(Buf* b) { b->data = NULL; b->size = 0; b->cap = 0; }
@@ -46,7 +47,7 @@ static int buf_append(Buf* b, const uint8_t* src, size_t len) {
 
 static void buf_free(Buf* b) { free(b->data); b->data = NULL; b->size = 0; b->cap = 0; }
 
-/* ── Callbacks ─────────────────────────────────────────────── */
+/* -- Callbacks ----------------------------------------------------------- */
 static size_t write_mem_cb(void* p, size_t s, size_t n, void* u) {
     Buf* b = (Buf*)u; size_t t = s*n; return buf_append(b,(uint8_t*)p,t)==0?t:0; }
 
@@ -65,7 +66,7 @@ static int progress_cb(void* c, curl_off_t dt, curl_off_t dn,
     return p->cancelled ? 1 : 0;
 }
 
-/* ── Helpers ───────────────────────────────────────────────── */
+/* -- Helpers ------------------------------------------------------------- */
 static NativeNetResponse* make_error(int32_t code, const char* msg) {
     NativeNetResponse* r = (NativeNetResponse*)calloc(1, sizeof(*r));
     if (r) { r->curl_code = code; r->error_message = msg ? strdup(msg) : NULL; }
@@ -89,7 +90,6 @@ static struct curl_slist* parse_headers(const char* h) {
 static void apply_opts(CURL* curl, const NativeNetRequestOptions* o,
                         struct curl_slist* slist, Buf* hdr_buf) {
 
-    /* Headers */
     if (slist) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, slist);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, write_hdr_cb);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, hdr_buf);
@@ -104,18 +104,16 @@ static void apply_opts(CURL* curl, const NativeNetRequestOptions* o,
     if (o->follow_redirects >= 0)
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, (long)(o->follow_redirects ? 1 : 0));
     else
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);  /* default: follow */
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     if (o->max_redirects > 0)
         curl_easy_setopt(curl, CURLOPT_MAXREDIRS, (long)o->max_redirects);
 
-    /* ── TLS / SSL ────────────────────────────────────── */
-    /* ssl_verify_peer: 1=verify, -1=skip, 0=default(verify) */
+    /* TLS / SSL */
     if (o->ssl_verify_peer == -1)
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     else
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
 
-    /* ssl_verify_host: 2=verify, -1=skip, 0=default(verify) */
     if (o->ssl_verify_host == -1)
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     else
@@ -134,7 +132,7 @@ static void apply_opts(CURL* curl, const NativeNetRequestOptions* o,
     if (o->pinned_public_key && *o->pinned_public_key)
         curl_easy_setopt(curl, CURLOPT_PINNEDPUBLICKEY, o->pinned_public_key);
 
-    /* ── Proxy ────────────────────────────────────────── */
+    /* Proxy */
     if (o->proxy && *o->proxy) {
         curl_easy_setopt(curl, CURLOPT_PROXY, o->proxy);
         if (o->proxy_type > 0)
@@ -145,14 +143,14 @@ static void apply_opts(CURL* curl, const NativeNetRequestOptions* o,
             curl_easy_setopt(curl, CURLOPT_HTTPPROXYTUNNEL, 1L);
     }
 
-    /* ── HTTP Auth ────────────────────────────────────── */
+    /* HTTP Auth */
     if (o->userpwd && *o->userpwd) {
         curl_easy_setopt(curl, CURLOPT_USERPWD, o->userpwd);
         if (o->http_auth > 0)
             curl_easy_setopt(curl, CURLOPT_HTTPAUTH, (long)o->http_auth);
     }
 
-    /* ── Cookies ──────────────────────────────────────── */
+    /* Cookies */
     if (o->cookie && *o->cookie)
         curl_easy_setopt(curl, CURLOPT_COOKIE, o->cookie);
     if (o->cookie_file && *o->cookie_file)
@@ -160,7 +158,7 @@ static void apply_opts(CURL* curl, const NativeNetRequestOptions* o,
     if (o->cookie_jar && *o->cookie_jar)
         curl_easy_setopt(curl, CURLOPT_COOKIEJAR, o->cookie_jar);
 
-    /* ── HTTP version ─────────────────────────────────── */
+    /* HTTP version */
     if (o->http_version > 0) {
         long v = CURL_HTTP_VERSION_NONE;
         switch (o->http_version) {
@@ -174,23 +172,23 @@ static void apply_opts(CURL* curl, const NativeNetRequestOptions* o,
         curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, v);
     }
 
-    /* ── Speed limits ─────────────────────────────────── */
+    /* Speed limits */
     if (o->max_recv_speed > 0)
         curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, (curl_off_t)o->max_recv_speed);
     if (o->max_send_speed > 0)
         curl_easy_setopt(curl, CURLOPT_MAX_SEND_SPEED_LARGE, (curl_off_t)o->max_send_speed);
 
-    /* ── Resume / Range ───────────────────────────────── */
+    /* Resume / Range */
     if (o->resume_from > 0)
         curl_easy_setopt(curl, CURLOPT_RESUME_FROM_LARGE, (curl_off_t)o->resume_from);
     if (o->range && *o->range)
         curl_easy_setopt(curl, CURLOPT_RANGE, o->range);
 
-    /* ── User-Agent ───────────────────────────────────── */
+    /* User-Agent */
     if (o->user_agent && *o->user_agent)
         curl_easy_setopt(curl, CURLOPT_USERAGENT, o->user_agent);
 
-    /* ── DNS ──────────────────────────────────────────── */
+    /* DNS */
     if (o->dns_servers && *o->dns_servers)
         curl_easy_setopt(curl, CURLOPT_DNS_SERVERS, o->dns_servers);
     if (o->resolve && *o->resolve) {
@@ -203,10 +201,9 @@ static void apply_opts(CURL* curl, const NativeNetRequestOptions* o,
             p = (*e == ',') ? e+1 : e;
         }
         if (r) curl_easy_setopt(curl, CURLOPT_RESOLVE, r);
-        /* NOTE: resolve slist leaks here; acceptable for this wrapper */
     }
 
-    /* ── Misc ─────────────────────────────────────────── */
+    /* Misc */
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
     curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
@@ -242,14 +239,14 @@ static void fill_meta(CURL* curl, NativeNetResponse* r, Buf* hdr) {
     }
 }
 
-/* ══════════════════════════════════════════════════════════════ */
-/* PUBLIC API                                                    */
-/* ══════════════════════════════════════════════════════════════ */
+/* ====================================================================== */
+/* PUBLIC API                                                             */
+/* ====================================================================== */
 
 FFI_PLUGIN_EXPORT int32_t native_net_init(void)  { return (int32_t)curl_global_init(CURL_GLOBAL_ALL); }
 FFI_PLUGIN_EXPORT void    native_net_cleanup(void){ curl_global_cleanup(); }
 
-/* ── Standard request ──────────────────────────────────────── */
+/* -- Standard request ---------------------------------------------------- */
 FFI_PLUGIN_EXPORT
 NativeNetResponse* native_net_request(const NativeNetRequestOptions* o) {
     if (!o || !o->url || !o->method)
@@ -266,7 +263,6 @@ NativeNetResponse* native_net_request(const NativeNetRequestOptions* o) {
 
     curl_easy_setopt(curl, CURLOPT_URL, o->url);
 
-    /* Method */
     if      (strcmp(o->method,"GET")==0)  curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
     else if (strcmp(o->method,"POST")==0) curl_easy_setopt(curl, CURLOPT_POST, 1L);
     else if (strcmp(o->method,"HEAD")==0) curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
@@ -278,7 +274,6 @@ NativeNetResponse* native_net_request(const NativeNetRequestOptions* o) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_mem_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body_buf);
 
-    /* Body */
     if (o->body && o->body_length > 0) {
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, o->body);
         curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)o->body_length);
@@ -305,7 +300,7 @@ NativeNetResponse* native_net_request(const NativeNetRequestOptions* o) {
     return resp;
 }
 
-/* ── Download to file ──────────────────────────────────────── */
+/* -- Download to file ---------------------------------------------------- */
 FFI_PLUGIN_EXPORT
 NativeNetResponse* native_net_download_file(const NativeNetRequestOptions* o) {
     if (!o || !o->url)       return make_error(-1, "url must not be NULL");
@@ -348,7 +343,7 @@ NativeNetResponse* native_net_download_file(const NativeNetRequestOptions* o) {
     return resp;
 }
 
-/* ── Upload file (multipart) ──────────────────────────────── */
+/* -- Upload file (multipart) --------------------------------------------- */
 FFI_PLUGIN_EXPORT
 NativeNetResponse* native_net_upload_file(const NativeNetRequestOptions* o) {
     if (!o || !o->url)       return make_error(-1, "url must not be NULL");
@@ -391,7 +386,7 @@ NativeNetResponse* native_net_upload_file(const NativeNetRequestOptions* o) {
         while (*p) {
             const char* eol = strchr(p, '\n');
             if (!eol) eol = p + strlen(p);
-            const char* eq = memchr(p, '=', (size_t)(eol-p));
+            const char* eq = (const char*)memchr(p, '=', (size_t)(eol-p));
             if (eq && eq > p) {
                 char* k = nn_strndup(p, (size_t)(eq-p));
                 char* v = nn_strndup(eq+1, (size_t)(eol-eq-1));
@@ -426,7 +421,7 @@ NativeNetResponse* native_net_upload_file(const NativeNetRequestOptions* o) {
     return resp;
 }
 
-/* ── Free response ─────────────────────────────────────────── */
+/* -- Free response ------------------------------------------------------- */
 FFI_PLUGIN_EXPORT
 void native_net_free_response(NativeNetResponse* r) {
     if (!r) return;

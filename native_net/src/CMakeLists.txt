@@ -1,26 +1,29 @@
 # =============================================================================
-# native_net – CMake build
+# native_net - CMake build
 #
 # ALWAYS builds libcurl from source via FetchContent so that the plugin
 # works regardless of whether the host system has libcurl installed.
 #
 # TLS backend per platform (all use system-level TLS, no OpenSSL needed):
-#   • Android  → mbedTLS      (built from source alongside curl)
-#   • Linux    → mbedTLS      (built from source — zero system dependency)
-#   • Windows  → Schannel     (provided by the OS)
-#   • Apple    → SecureTransport (provided by the OS)
+#   Android  -> mbedTLS      (built from source alongside curl)
+#   Linux    -> mbedTLS      (built from source, zero system dependency)
+#   Windows  -> Schannel     (provided by the OS)
+#   Apple    -> SecureTransport (provided by the OS)
 # =============================================================================
 
 cmake_minimum_required(VERSION 3.14)
 
-project(native_net VERSION 0.2.0 LANGUAGES C)
+project(native_net VERSION 0.3.0 LANGUAGES C)
 
 include(FetchContent)
 
-# ─── mbedTLS (for Android & Linux which need a bundled TLS library) ──────────
+# Prevent curl's INSTALL target from being built (fixes MSVC INSTALL.vcxproj error)
+set(CMAKE_SKIP_INSTALL_RULES TRUE)
+
+# === mbedTLS (for Android & Linux which need a bundled TLS library) =======
 
 if(ANDROID OR (UNIX AND NOT APPLE))
-    message(STATUS "[native_net] Building mbedTLS from source for TLS …")
+    message(STATUS "[native_net] Building mbedTLS from source for TLS ...")
     set(ENABLE_TESTING  OFF CACHE BOOL "" FORCE)
     set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 
@@ -32,21 +35,20 @@ if(ANDROID OR (UNIX AND NOT APPLE))
     FetchContent_MakeAvailable(mbedtls)
 endif()
 
-# ─── libcurl (always built from source) ─────────────────────────────────────
+# === libcurl (always built from source) ===================================
 
-message(STATUS "[native_net] Building libcurl from source …")
+message(STATUS "[native_net] Building libcurl from source ...")
 
 set(BUILD_CURL_EXE       OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS    OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING        OFF CACHE BOOL "" FORCE)
-set(CURL_DISABLE_INSTALL  ON CACHE BOOL "" FORCE)
 set(HTTP_ONLY             ON CACHE BOOL "" FORCE)   # only HTTP(S)
 set(CURL_DISABLE_LDAP    ON CACHE BOOL "" FORCE)
 set(CURL_DISABLE_LDAPS   ON CACHE BOOL "" FORCE)
+set(CURL_USE_LIBPSL      OFF CACHE BOOL "" FORCE)   # disable libpsl (not needed)
 
 # TLS backend selection
 if(ANDROID OR (UNIX AND NOT APPLE))
-    # Android & Linux → mbedTLS (zero system dependency)
     set(CURL_USE_OPENSSL   OFF CACHE BOOL "" FORCE)
     set(CURL_USE_MBEDTLS    ON CACHE BOOL "" FORCE)
     set(MBEDTLS_INCLUDE_DIRS "${mbedtls_SOURCE_DIR}/include" CACHE STRING "" FORCE)
@@ -54,11 +56,9 @@ if(ANDROID OR (UNIX AND NOT APPLE))
     set(MBEDX509_LIBRARY     mbedx509     CACHE STRING "" FORCE)
     set(MBEDCRYPTO_LIBRARY   mbedcrypto   CACHE STRING "" FORCE)
 elseif(WIN32)
-    # Windows → Schannel (always available)
     set(CURL_USE_OPENSSL   OFF CACHE BOOL "" FORCE)
     set(CURL_USE_SCHANNEL   ON CACHE BOOL "" FORCE)
 elseif(APPLE)
-    # macOS / iOS → Secure Transport (always available)
     set(CURL_USE_OPENSSL   OFF CACHE BOOL "" FORCE)
     set(CURL_USE_SECTRANSP  ON CACHE BOOL "" FORCE)
 endif()
@@ -76,7 +76,7 @@ set(CURL_INCLUDE_DIRS
     ${curl_BINARY_DIR}/include
 )
 
-# ─── Build our wrapper shared library ────────────────────────────────────────
+# === Build our wrapper shared library =====================================
 
 add_library(native_net SHARED
     native_net_ffi.c
@@ -88,6 +88,13 @@ target_include_directories(native_net PRIVATE
 )
 
 target_link_libraries(native_net PRIVATE ${CURL_TARGETS})
+
+# Suppress MSVC warnings in our code
+if(MSVC)
+    target_compile_definitions(native_net PRIVATE
+        _CRT_SECURE_NO_WARNINGS     # disable strdup/fopen deprecation
+    )
+endif()
 
 set_target_properties(native_net PROPERTIES
     C_VISIBILITY_PRESET       default
