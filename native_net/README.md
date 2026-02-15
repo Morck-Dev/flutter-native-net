@@ -111,7 +111,22 @@ dependencies:
 
 ### 各平台设置
 
-**Android / Linux / Windows** — **无需额外设置**。首次构建时自动从源码编译 libcurl 和 mbedTLS。
+**Android / Linux** — **无需额外设置**。首次构建时自动从源码编译 libcurl 和 mbedTLS。
+
+**Windows** — 需要开启 **开发者模式**（Flutter 插件在 Windows 上依赖符号链接）：
+
+```
+方法一：命令行打开设置（推荐）
+  start ms-settings:developers
+  → 打开后启用「开发者模式」开关
+
+方法二：手动设置
+  设置 → 更新和安全 → 开发者选项 → 打开「开发者模式」
+
+方法三：以管理员身份运行终端（临时方案，不推荐长期使用）
+```
+
+开启后首次构建会自动从源码编译 libcurl + Schannel（Windows 原生 TLS），无需手动操作。
 
 **iOS** — 首次构建前运行一次脚本：
 
