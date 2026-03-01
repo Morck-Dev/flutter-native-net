@@ -1,23 +1,75 @@
 # =============================================================================
 # native_net - CMake build
 #
-# ALWAYS builds libcurl from source via FetchContent so that the plugin
-# works regardless of whether the host system has libcurl installed.
+# Build strategy (in order):
+#   1. Use prebuilt binary from prebuilt/ directory (fastest, no deps)
+#   2. Fall back to building libcurl from source via FetchContent
 #
-# TLS backend per platform:
-#   Android  -> mbedTLS      (built from source alongside curl)
-#   Linux    -> mbedTLS      (built from source, zero system dependency)
-#   Windows  -> Schannel     (provided by the OS)
-#   Apple    -> SecureTransport (provided by the OS)
+# To force source build: cmake -DNATIVE_NET_FORCE_BUILD=ON ...
 # =============================================================================
 
 cmake_minimum_required(VERSION 3.14)
 
 project(native_net VERSION 0.3.0 LANGUAGES C)
 
+option(NATIVE_NET_FORCE_BUILD "Force building from source even if prebuilt exists" OFF)
+
+# === Check for prebuilt binary ============================================
+
+set(PREBUILT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../prebuilt")
+set(USE_PREBUILT OFF)
+
+if(NOT NATIVE_NET_FORCE_BUILD)
+    if(WIN32)
+        set(PREBUILT_LIB "${PREBUILT_DIR}/windows/x64/native_net.dll")
+    elseif(ANDROID)
+        set(PREBUILT_LIB "${PREBUILT_DIR}/android/${ANDROID_ABI}/libnative_net.so")
+    elseif(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        set(PREBUILT_LIB "${PREBUILT_DIR}/ios/libnative_net.a")
+    elseif(APPLE)
+        set(PREBUILT_LIB "${PREBUILT_DIR}/macos/libnative_net.dylib")
+    else()
+        set(PREBUILT_LIB "${PREBUILT_DIR}/linux/x64/libnative_net.so")
+    endif()
+
+    if(EXISTS "${PREBUILT_LIB}")
+        set(USE_PREBUILT ON)
+        message(STATUS "[native_net] Using PREBUILT binary: ${PREBUILT_LIB}")
+    endif()
+endif()
+
+# === Path A: Use prebuilt binary ==========================================
+
+if(USE_PREBUILT)
+    add_library(native_net SHARED IMPORTED GLOBAL)
+
+    if(WIN32)
+        set_target_properties(native_net PROPERTIES IMPORTED_LOCATION "${PREBUILT_LIB}")
+        set_target_properties(native_net PROPERTIES IMPORTED_IMPLIB "${PREBUILT_LIB}")
+    else()
+        set_target_properties(native_net PROPERTIES IMPORTED_LOCATION "${PREBUILT_LIB}")
+    endif()
+
+    # Copy the prebuilt binary to the build output so Flutter can bundle it
+    if(WIN32)
+        set(OUT_FILE "${CMAKE_CURRENT_BINARY_DIR}/native_net.dll")
+        add_custom_command(OUTPUT "${OUT_FILE}"
+            COMMAND ${CMAKE_COMMAND} -E copy "${PREBUILT_LIB}" "${OUT_FILE}"
+            DEPENDS "${PREBUILT_LIB}")
+        add_custom_target(native_net_copy ALL DEPENDS "${OUT_FILE}")
+    endif()
+
+    return()
+endif()
+
+# === Path B: Build from source ============================================
+
+message(STATUS "[native_net] No prebuilt found, building from source ...")
+message(STATUS "[native_net] (Run 'bash scripts/download_prebuilt.sh' to get prebuilt binaries)")
+
 include(FetchContent)
 
-# === mbedTLS (for Android & Linux) ========================================
+# --- mbedTLS (for Android & Linux) ----------------------------------------
 
 if(ANDROID OR (UNIX AND NOT APPLE))
     message(STATUS "[native_net] Building mbedTLS from source for TLS ...")
@@ -29,8 +81,6 @@ if(ANDROID OR (UNIX AND NOT APPLE))
         URL      https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.2/mbedtls-3.6.2.tar.bz2
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
-    # Use manual populate + EXCLUDE_FROM_ALL to prevent mbedtls
-    # install() targets from interfering with the build.
     FetchContent_GetProperties(mbedtls)
     if(NOT mbedtls_POPULATED)
         FetchContent_Populate(mbedtls)
@@ -38,17 +88,17 @@ if(ANDROID OR (UNIX AND NOT APPLE))
     endif()
 endif()
 
-# === libcurl (always built from source) ===================================
+# --- libcurl ---------------------------------------------------------------
 
 message(STATUS "[native_net] Building libcurl from source ...")
 
 set(BUILD_CURL_EXE       OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS    OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING        OFF CACHE BOOL "" FORCE)
-set(HTTP_ONLY             ON CACHE BOOL "" FORCE)   # only HTTP(S)
+set(HTTP_ONLY             ON CACHE BOOL "" FORCE)
 set(CURL_DISABLE_LDAP    ON CACHE BOOL "" FORCE)
 set(CURL_DISABLE_LDAPS   ON CACHE BOOL "" FORCE)
-set(CURL_USE_LIBPSL      OFF CACHE BOOL "" FORCE)   # no libpsl needed
+set(CURL_USE_LIBPSL      OFF CACHE BOOL "" FORCE)
 
 # TLS backend selection
 if(ANDROID OR (UNIX AND NOT APPLE))
@@ -72,10 +122,8 @@ FetchContent_Declare(
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 
-# CRITICAL: Use manual populate + EXCLUDE_FROM_ALL so that curl's
-# install() targets are NOT added to the default build.
-# Without this, the INSTALL.vcxproj target fails on Windows because
-# Flutter's MSVC build triggers it without proper install permissions.
+# EXCLUDE_FROM_ALL prevents curl's install() targets from causing
+# INSTALL.vcxproj build failures on Windows.
 FetchContent_GetProperties(curl)
 if(NOT curl_POPULATED)
     FetchContent_Populate(curl)
@@ -88,7 +136,7 @@ set(CURL_INCLUDE_DIRS
     ${curl_BINARY_DIR}/include
 )
 
-# === Build our wrapper shared library =====================================
+# --- Build native_net shared library ----------------------------------------
 
 add_library(native_net SHARED
     native_net_ffi.c
@@ -101,11 +149,8 @@ target_include_directories(native_net PRIVATE
 
 target_link_libraries(native_net PRIVATE ${CURL_TARGETS})
 
-# Suppress MSVC warnings in our code
 if(MSVC)
-    target_compile_definitions(native_net PRIVATE
-        _CRT_SECURE_NO_WARNINGS
-    )
+    target_compile_definitions(native_net PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 
 set_target_properties(native_net PROPERTIES
@@ -114,9 +159,7 @@ set_target_properties(native_net PROPERTIES
 )
 
 if(ANDROID)
-    set_target_properties(native_net PROPERTIES
-        OUTPUT_NAME "native_net"
-    )
+    set_target_properties(native_net PROPERTIES OUTPUT_NAME "native_net")
 endif()
 
 if(APPLE)
