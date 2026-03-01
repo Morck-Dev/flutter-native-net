@@ -109,40 +109,57 @@ dependencies:
       path: native_net
 ```
 
-### 各平台设置
+### 两种构建方式
 
-**Android / Linux** — **无需额外设置**。首次构建时自动从源码编译 libcurl 和 mbedTLS。
+#### 方式一：使用预编译二进制（推荐）
 
-**Windows** — 需要开启 **开发者模式**（Flutter 插件在 Windows 上依赖符号链接）：
-
-```
-方法一：命令行打开设置（推荐）
-  start ms-settings:developers
-  → 打开后启用「开发者模式」开关
-
-方法二：手动设置
-  设置 → 更新和安全 → 开发者选项 → 打开「开发者模式」
-
-方法三：以管理员身份运行终端（临时方案，不推荐长期使用）
-```
-
-开启后首次构建会自动从源码编译 libcurl + Schannel（Windows 原生 TLS），无需手动操作。
-
-**iOS** — 首次构建前运行一次脚本：
+从 GitHub Releases 下载已编译好的所有平台二进制文件，**零编译依赖、零网络风险、秒级构建**：
 
 ```bash
 cd native_net
+bash scripts/download_prebuilt.sh
+```
+
+执行后会在 `native_net/prebuilt/` 下生成所有平台的 `.so` / `.dll` / `.dylib` 文件。
+之后直接 `flutter run` 即可，CMake 会自动检测并使用预编译文件。
+
+#### 方式二：从源码编译（自动回退）
+
+如果没有下载预编译文件，CMake 会自动从源码编译 libcurl。
+这种方式需要联网下载 curl 和 mbedTLS 源码，首次构建较慢（3-5 分钟）。
+
+### 各平台注意事项
+
+**Windows** — 需要开启 **开发者模式**（Flutter 插件依赖符号链接）：
+
+```
+命令行打开设置: start ms-settings:developers
+打开后启用「开发者模式」开关
+```
+
+**iOS** — 如果不使用预编译二进制，需先运行构建脚本：
+
+```bash
 bash scripts/build_curl_ios.sh
 ```
 
-**macOS** — 首次构建前运行一次脚本：
+**macOS** — 如果不使用预编译二进制，需先运行构建脚本：
 
 ```bash
-cd native_net
 bash scripts/build_curl_macos.sh
 ```
 
-> 首次编译需要几分钟下载和编译 libcurl 源码，后续构建会使用缓存。
+### GitHub Actions 自动构建
+
+本项目配置了 GitHub Actions，推送 `v*` 标签时自动编译所有平台并发布到 Releases：
+
+```bash
+git tag v0.3.0
+git push origin v0.3.0
+# Actions 自动构建 -> Release 页面下载
+```
+
+也可在 GitHub Actions 页面手动触发 `workflow_dispatch`。
 
 ---
 
