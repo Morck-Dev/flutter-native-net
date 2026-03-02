@@ -5,20 +5,13 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      create_release:
-        description: 'Create a GitHub Release'
-        type: boolean
-        default: true
 
 permissions:
   contents: write
 
 env:
   CURL_VERSION: "8.11.1"
-  CURL_URL: "https://github.com/curl/curl/releases/download/curl-8_11_1/curl-8.11.1.tar.gz"
   MBEDTLS_VERSION: "3.6.2"
-  MBEDTLS_URL: "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.2/mbedtls-3.6.2.tar.bz2"
 
 jobs:
   # =========================================================================
@@ -28,22 +21,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Configure CMake
-        run: >
-          cmake -S native_net/src -B build
-          -A x64
-          -DCMAKE_BUILD_TYPE=Release
-
       - name: Build
-        run: cmake --build build --config Release --parallel
-
-      - name: Collect artifact
+        run: |
+          cmake -S native_net/src -B build -A x64 -DCMAKE_BUILD_TYPE=Release -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build --config Release --parallel
+      - name: Collect
         shell: bash
         run: |
           mkdir -p out/windows/x64
           cp build/Release/native_net.dll out/windows/x64/
-
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
@@ -53,50 +39,45 @@ jobs:
   # Linux x64
   # =========================================================================
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-
-      - name: Configure CMake
-        run: cmake -S native_net/src -B build -DCMAKE_BUILD_TYPE=Release
-
       - name: Build
-        run: cmake --build build --config Release --parallel
-
-      - name: Collect artifact
+        run: |
+          cmake -S native_net/src -B build -DCMAKE_BUILD_TYPE=Release -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build --config Release --parallel
+      - name: Collect
         run: |
           mkdir -p out/linux/x64
           cp build/libnative_net.so out/linux/x64/
-
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x64
           path: out/linux/x64/
 
   # =========================================================================
-  # macOS (universal: arm64 + x86_64)
+  # macOS universal (arm64 + x86_64)
   # =========================================================================
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
-
       - name: Build arm64
         run: |
           cmake -S native_net/src -B build-arm64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 \
+            -DNATIVE_NET_FORCE_BUILD=ON
           cmake --build build-arm64 --config Release --parallel
-
       - name: Build x86_64
         run: |
           cmake -S native_net/src -B build-x64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 \
+            -DNATIVE_NET_FORCE_BUILD=ON
           cmake --build build-x64 --config Release --parallel
-
       - name: Create universal binary
         run: |
           mkdir -p out/macos
@@ -104,40 +85,38 @@ jobs:
             build-arm64/libnative_net.dylib \
             build-x64/libnative_net.dylib \
             -output out/macos/libnative_net.dylib
-
       - uses: actions/upload-artifact@v4
         with:
           name: macos-universal
           path: out/macos/
 
   # =========================================================================
-  # iOS (arm64)
+  # iOS arm64 (static library)
   # =========================================================================
   build-ios:
-    runs-on: macos-latest
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build iOS arm64
+      - name: Build
         run: |
           cmake -S native_net/src -B build-ios \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=9.0 \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNATIVE_NET_FORCE_BUILD=ON
           cmake --build build-ios --config Release --parallel
-
-      - name: Collect artifact
+      - name: Collect
         run: |
           mkdir -p out/ios
-          # On iOS the output is a static lib (SHARED not supported for iOS)
-          # We ship the .a and headers
-          find build-ios -name "libnative_net.*" -o -name "native_net.*" | head -5
-          cp build-ios/libnative_net.dylib out/ios/ 2>/dev/null || \
-          cp build-ios/libnative_net.a out/ios/ 2>/dev/null || \
-          echo "Warning: iOS binary not found, check build output"
+          find build-ios -name "*.dylib" -o -name "*.a" | while read f; do
+            echo "Found: $f"
+          done
+          # iOS may produce .dylib or .a depending on CMake config
+          cp build-ios/libnative_net.dylib out/ios/ 2>/dev/null || true
+          cp build-ios/libnative_net.a out/ios/ 2>/dev/null || true
           cp native_net/src/native_net_ffi.h out/ios/
-
+          ls -la out/ios/
       - uses: actions/upload-artifact@v4
         with:
           name: ios-arm64
@@ -147,19 +126,17 @@ jobs:
   # Android (arm64-v8a, armeabi-v7a, x86_64)
   # =========================================================================
   build-android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         abi: [arm64-v8a, armeabi-v7a, x86_64]
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
           ndk-version: r26d
-
       - name: Build for ${{ matrix.abi }}
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -168,65 +145,51 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=${{ matrix.abi }} \
             -DANDROID_PLATFORM=android-21 \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNATIVE_NET_FORCE_BUILD=ON
           cmake --build build --config Release --parallel
-
-      - name: Collect artifact
+      - name: Collect
         run: |
           mkdir -p out/android/${{ matrix.abi }}
           cp build/libnative_net.so out/android/${{ matrix.abi }}/
-
       - uses: actions/upload-artifact@v4
         with:
           name: android-${{ matrix.abi }}
           path: out/android/${{ matrix.abi }}/
 
   # =========================================================================
-  # Create GitHub Release
+  # Package & Release
   # =========================================================================
   release:
     needs: [build-windows, build-linux, build-macos, build-ios, build-android]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: Package platform archives
+      - name: Package archives
         run: |
           mkdir -p release
-
-          # Windows
           cd artifacts/windows-x64 && zip -r ../../release/native_net-windows-x64.zip . && cd ../..
-
-          # Linux
           cd artifacts/linux-x64 && tar czf ../../release/native_net-linux-x64.tar.gz . && cd ../..
-
-          # macOS
           cd artifacts/macos-universal && tar czf ../../release/native_net-macos-universal.tar.gz . && cd ../..
-
-          # iOS
           cd artifacts/ios-arm64 && tar czf ../../release/native_net-ios-arm64.tar.gz . && cd ../..
-
-          # Android (combine all ABIs)
-          mkdir -p android-combined
-          cp -r artifacts/android-arm64-v8a/* android-combined/
-          cp -r artifacts/android-armeabi-v7a/* android-combined/
-          cp -r artifacts/android-x86_64/* android-combined/
-          cd android-combined && tar czf ../release/native_net-android-all.tar.gz . && cd ..
-
-          ls -la release/
-
+          mkdir -p android-all
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            mkdir -p android-all/$abi
+            cp artifacts/android-$abi/* android-all/$abi/
+          done
+          cd android-all && tar czf ../release/native_net-android-all.tar.gz . && cd ..
+          echo "=== Release artifacts ==="
+          ls -lh release/
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "native_net ${{ github.ref_name || 'prebuilt' }}"
+          name: "native_net ${{ github.ref_name || format('prebuilt-{0}', github.run_number) }}"
+          tag_name: ${{ github.ref_name || format('prebuilt-{0}', github.run_number) }}
           body: |
-            Prebuilt native_net binaries (libcurl ${{ env.CURL_VERSION }} + mbedTLS ${{ env.MBEDTLS_VERSION }}).
+            Prebuilt `native_net` binaries (libcurl ${{ env.CURL_VERSION }} + mbedTLS ${{ env.MBEDTLS_VERSION }}).
 
             | Platform | File | TLS Backend |
             |----------|------|-------------|
@@ -236,11 +199,9 @@ jobs:
             | iOS arm64 | `native_net-ios-arm64.tar.gz` | Secure Transport |
             | Android (all ABIs) | `native_net-android-all.tar.gz` | mbedTLS |
 
-            ### Usage
+            **Usage:**
             ```bash
-            # Download and extract to native_net/prebuilt/
-            bash native_net/scripts/download_prebuilt.sh
+            cd native_net && bash scripts/download_prebuilt.sh
             ```
           files: release/*
           generate_release_notes: true
-          tag_name: ${{ github.ref_name || format('prebuilt-{0}', github.run_number) }}

@@ -1,18 +1,28 @@
 # =============================================================================
 # native_net - CMake build
 #
-# Build strategy (in order):
-#   1. Use prebuilt binary from prebuilt/ directory (fastest, no deps)
+# Build strategy:
+#   1. Check prebuilt/ for precompiled binaries (fastest)
 #   2. Fall back to building libcurl from source via FetchContent
 #
-# To force source build: cmake -DNATIVE_NET_FORCE_BUILD=ON ...
+# TLS backends: mbedTLS (Android/Linux), Schannel (Win), SecureTransport (Apple)
 # =============================================================================
 
 cmake_minimum_required(VERSION 3.14)
 
+# Allow FetchContent_Populate on CMake 3.30+ (avoids CMP0169 warning)
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+endif()
+
 project(native_net VERSION 0.3.0 LANGUAGES C)
 
 option(NATIVE_NET_FORCE_BUILD "Force building from source even if prebuilt exists" OFF)
+
+# Redirect install() to a harmless build-local directory.
+# This prevents INSTALL target failures on Windows (Flutter MSVC) and
+# also fixes curl export-set errors when mbedtls is a sub-build.
+set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/_nn_install" CACHE PATH "" FORCE)
 
 # === Check for prebuilt binary ============================================
 
@@ -38,59 +48,42 @@ if(NOT NATIVE_NET_FORCE_BUILD)
     endif()
 endif()
 
-# === Path A: Use prebuilt binary ==========================================
-
 if(USE_PREBUILT)
     add_library(native_net SHARED IMPORTED GLOBAL)
-
+    set_target_properties(native_net PROPERTIES IMPORTED_LOCATION "${PREBUILT_LIB}")
     if(WIN32)
-        set_target_properties(native_net PROPERTIES IMPORTED_LOCATION "${PREBUILT_LIB}")
         set_target_properties(native_net PROPERTIES IMPORTED_IMPLIB "${PREBUILT_LIB}")
-    else()
-        set_target_properties(native_net PROPERTIES IMPORTED_LOCATION "${PREBUILT_LIB}")
     endif()
-
-    # Copy the prebuilt binary to the build output so Flutter can bundle it
-    if(WIN32)
-        set(OUT_FILE "${CMAKE_CURRENT_BINARY_DIR}/native_net.dll")
-        add_custom_command(OUTPUT "${OUT_FILE}"
-            COMMAND ${CMAKE_COMMAND} -E copy "${PREBUILT_LIB}" "${OUT_FILE}"
-            DEPENDS "${PREBUILT_LIB}")
-        add_custom_target(native_net_copy ALL DEPENDS "${OUT_FILE}")
-    endif()
-
     return()
 endif()
 
-# === Path B: Build from source ============================================
+# === Build from source ====================================================
 
-message(STATUS "[native_net] No prebuilt found, building from source ...")
-message(STATUS "[native_net] (Run 'bash scripts/download_prebuilt.sh' to get prebuilt binaries)")
+message(STATUS "[native_net] Building from source (run 'bash scripts/download_prebuilt.sh' for prebuilt)")
 
 include(FetchContent)
 
-# --- mbedTLS (for Android & Linux) ----------------------------------------
+# --- mbedTLS (Android & Linux) --------------------------------------------
 
 if(ANDROID OR (UNIX AND NOT APPLE))
-    message(STATUS "[native_net] Building mbedTLS from source for TLS ...")
+    message(STATUS "[native_net] Building mbedTLS ...")
     set(ENABLE_TESTING  OFF CACHE BOOL "" FORCE)
     set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 
-    FetchContent_Declare(
-        mbedtls
+    FetchContent_Declare(mbedtls
         URL      https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.2/mbedtls-3.6.2.tar.bz2
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_GetProperties(mbedtls)
     if(NOT mbedtls_POPULATED)
         FetchContent_Populate(mbedtls)
-        add_subdirectory(${mbedtls_SOURCE_DIR} ${mbedtls_BINARY_DIR} EXCLUDE_FROM_ALL)
+        add_subdirectory(${mbedtls_SOURCE_DIR} ${mbedtls_BINARY_DIR})
     endif()
 endif()
 
 # --- libcurl ---------------------------------------------------------------
 
-message(STATUS "[native_net] Building libcurl from source ...")
+message(STATUS "[native_net] Building libcurl ...")
 
 set(BUILD_CURL_EXE       OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS    OFF CACHE BOOL "" FORCE)
@@ -99,8 +92,12 @@ set(HTTP_ONLY             ON CACHE BOOL "" FORCE)
 set(CURL_DISABLE_LDAP    ON CACHE BOOL "" FORCE)
 set(CURL_DISABLE_LDAPS   ON CACHE BOOL "" FORCE)
 set(CURL_USE_LIBPSL      OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBSSH2     OFF CACHE BOOL "" FORCE)
+set(USE_LIBIDN2          OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBIDN2     OFF CACHE BOOL "" FORCE)
+set(USE_NGHTTP2          OFF CACHE BOOL "" FORCE)
+set(CURL_DISABLE_ALTSVC  ON CACHE BOOL "" FORCE)
 
-# TLS backend selection
 if(ANDROID OR (UNIX AND NOT APPLE))
     set(CURL_USE_OPENSSL   OFF CACHE BOOL "" FORCE)
     set(CURL_USE_MBEDTLS    ON CACHE BOOL "" FORCE)
@@ -116,18 +113,14 @@ elseif(APPLE)
     set(CURL_USE_SECTRANSP  ON CACHE BOOL "" FORCE)
 endif()
 
-FetchContent_Declare(
-    curl
+FetchContent_Declare(curl
     URL      https://github.com/curl/curl/releases/download/curl-8_11_1/curl-8.11.1.tar.gz
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
-
-# EXCLUDE_FROM_ALL prevents curl's install() targets from causing
-# INSTALL.vcxproj build failures on Windows.
 FetchContent_GetProperties(curl)
 if(NOT curl_POPULATED)
     FetchContent_Populate(curl)
-    add_subdirectory(${curl_SOURCE_DIR} ${curl_BINARY_DIR} EXCLUDE_FROM_ALL)
+    add_subdirectory(${curl_SOURCE_DIR} ${curl_BINARY_DIR})
 endif()
 
 set(CURL_TARGETS libcurl_static)
@@ -136,11 +129,9 @@ set(CURL_INCLUDE_DIRS
     ${curl_BINARY_DIR}/include
 )
 
-# --- Build native_net shared library ----------------------------------------
+# --- native_net shared library ---------------------------------------------
 
-add_library(native_net SHARED
-    native_net_ffi.c
-)
+add_library(native_net SHARED native_net_ffi.c)
 
 target_include_directories(native_net PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -148,6 +139,15 @@ target_include_directories(native_net PRIVATE
 )
 
 target_link_libraries(native_net PRIVATE ${CURL_TARGETS})
+
+# Apple platforms: link system frameworks needed by Secure Transport
+if(APPLE)
+    target_link_libraries(native_net PRIVATE
+        "-framework Security"
+        "-framework CoreFoundation"
+        "-framework SystemConfiguration"
+    )
+endif()
 
 if(MSVC)
     target_compile_definitions(native_net PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -160,11 +160,4 @@ set_target_properties(native_net PROPERTIES
 
 if(ANDROID)
     set_target_properties(native_net PROPERTIES OUTPUT_NAME "native_net")
-endif()
-
-if(APPLE)
-    set_target_properties(native_net PROPERTIES
-        FRAMEWORK  FALSE
-        LINK_FLAGS "-undefined dynamic_lookup"
-    )
 endif()
