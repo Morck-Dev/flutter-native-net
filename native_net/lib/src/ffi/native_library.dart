@@ -2,18 +2,26 @@ import 'dart:ffi';
 import 'dart:io';
 
 /// Loads the native_net shared library for the current platform.
-///
-/// The library is built via CMake (Android/Linux/Windows) or CocoaPods
-/// (iOS/macOS) and bundled with the app automatically by Flutter.
 DynamicLibrary openNativeLibrary() {
-  if (Platform.isAndroid || Platform.isLinux) {
+  if (Platform.isAndroid) {
+    return DynamicLibrary.open('libnative_net.so');
+  }
+  if (Platform.isLinux) {
     return DynamicLibrary.open('libnative_net.so');
   }
   if (Platform.isIOS) {
+    // On iOS, vendored xcframework is statically linked into the app.
+    // Symbols are available in the current process.
     return DynamicLibrary.process();
   }
   if (Platform.isMacOS) {
-    return DynamicLibrary.open('native_net.framework/native_net');
+    // On macOS, vendored xcframework is loaded as a dynamic framework.
+    // Try the framework bundle first, fall back to process symbols.
+    try {
+      return DynamicLibrary.open('native_net.framework/native_net');
+    } catch (_) {
+      return DynamicLibrary.process();
+    }
   }
   if (Platform.isWindows) {
     return DynamicLibrary.open('native_net.dll');

@@ -32,10 +32,10 @@ flutter:
         package: com.example.native_net
         pluginClass: NativeNetPlugin
       ios:
-        ffiPlugin: true
-      linux:
-        ffiPlugin: true
+        pluginClass: NativeNetPlugin
       macos:
+        pluginClass: NativeNetPlugin
+      linux:
         ffiPlugin: true
       windows:
         ffiPlugin: true
