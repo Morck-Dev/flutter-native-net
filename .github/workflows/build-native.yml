@@ -59,7 +59,7 @@ jobs:
   # macOS universal (arm64 + x86_64)
   # =========================================================================
   build-macos:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build arm64
@@ -94,7 +94,7 @@ jobs:
   # iOS arm64 (static library)
   # =========================================================================
   build-ios:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build
