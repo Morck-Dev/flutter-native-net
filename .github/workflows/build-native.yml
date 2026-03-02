@@ -85,24 +85,21 @@ jobs:
 
       - name: Package AAR
         run: |
-          # AAR is a zip with specific structure
-          mkdir -p aar_staging/jni/arm64-v8a aar_staging/jni/armeabi-v7a aar_staging/jni/x86_64
-          cp build-arm64-v8a/libnative_net.so   aar_staging/jni/arm64-v8a/
-          cp build-armeabi-v7a/libnative_net.so  aar_staging/jni/armeabi-v7a/
-          cp build-x86_64/libnative_net.so       aar_staging/jni/x86_64/
+          mkdir -p aar/jni/arm64-v8a aar/jni/armeabi-v7a aar/jni/x86_64
+          cp build-arm64-v8a/libnative_net.so   aar/jni/arm64-v8a/
+          cp build-armeabi-v7a/libnative_net.so  aar/jni/armeabi-v7a/
+          cp build-x86_64/libnative_net.so       aar/jni/x86_64/
 
           # Minimal AndroidManifest.xml
-          cat > aar_staging/AndroidManifest.xml << 'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-              package="com.example.native_net">
-          </manifest>
-          EOF
+          echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.native_net"></manifest>' > aar/AndroidManifest.xml
 
           # Empty classes.jar (required by AAR spec)
-          cd aar_staging && jar cf classes.jar -C /dev/null . 2>/dev/null || (mkdir empty && cd empty && jar cf ../classes.jar . && cd .. && rm -rf empty)
+          touch empty_file
+          jar cf aar/classes.jar empty_file
+          rm empty_file
 
-          # Create AAR
-          cd aar_staging && zip -r ../native_net.aar . && cd ..
+          # Create AAR (which is just a zip)
+          cd aar && zip -r ../native_net.aar . && cd ..
           ls -lh native_net.aar
 
       - uses: actions/upload-artifact@v4
