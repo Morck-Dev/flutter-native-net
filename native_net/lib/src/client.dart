@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
+
+import 'package:flutter/services.dart' show rootBundle;
 
 import '../native_net_platform_interface.dart';
 import 'models/config.dart';
@@ -28,6 +31,7 @@ class NativeNetClient {
   final List<ResponseInterceptor> _responseInterceptors = [];
   bool _initialized = false;
   bool _closed = false;
+  String? _caBundlePath;
 
   NativeNetClient({NativeNetConfig? config})
       : _config = config ?? const NativeNetConfig();
@@ -51,6 +55,12 @@ class NativeNetClient {
     }
     if (!_initialized) {
       await NativeNetPlatform.instance.initialize(_config.toMap());
+      // On Android/Linux (mbedTLS), extract the bundled CA certificate
+      // so libcurl can verify HTTPS connections. Windows (Schannel) and
+      // Apple (Secure Transport) use system CA stores automatically.
+      if (Platform.isAndroid || Platform.isLinux) {
+        _caBundlePath = await _extractCaBundle();
+      }
       _initialized = true;
     }
   }
@@ -466,6 +476,34 @@ class NativeNetClient {
     }
     if (_config.userAgent != null) map['userAgent'] = _config.userAgent;
     if (_config.dnsServers != null) map['dnsServers'] = _config.dnsServers;
+
+    // Inject bundled CA certificate path for mbedTLS platforms
+    // (only if user hasn't specified their own CA via TlsConfig)
+    if (_caBundlePath != null && map['caInfo'] == null) {
+      map['caInfo'] = _caBundlePath;
+    }
+  }
+
+  /// Extracts the bundled Mozilla CA certificate to a temp file.
+  /// Returns the file path for use with CURLOPT_CAINFO.
+  Future<String?> _extractCaBundle() async {
+    try {
+      final tempDir = Directory.systemTemp;
+      final caFile = File('${tempDir.path}/native_net_cacert.pem');
+
+      // Only extract if not already present (persists across hot restarts)
+      if (!caFile.existsSync()) {
+        final data = await rootBundle.load(
+          'packages/native_net/assets/cacert.pem',
+        );
+        await caFile.writeAsBytes(data.buffer.asUint8List(), flush: true);
+      }
+      return caFile.path;
+    } catch (e) {
+      // If extraction fails, HTTPS on mbedTLS will fail with cert errors.
+      // Log but don't crash — user can provide their own CA via TlsConfig.
+      return null;
+    }
   }
 
   /// Closes the client and releases native resources.
