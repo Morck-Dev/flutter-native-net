@@ -109,57 +109,51 @@ dependencies:
       path: native_net
 ```
 
-### 两种构建方式
+### 预编译二进制（推荐，秒级构建）
 
-#### 方式一：使用预编译二进制（推荐）
+从 [GitHub Releases](https://github.com/Morck-Dev/flutter-native-net/releases) 下载预编译文件放到对应位置即可，**不需要编译任何东西**。
 
-从 GitHub Releases 下载已编译好的所有平台二进制文件，**零编译依赖、零网络风险、秒级构建**：
+#### 一键下载（Linux/macOS/Git Bash）
 
 ```bash
 cd native_net
+
+# 支持代理
+export HTTPS_PROXY=http://127.0.0.1:7890  # 可选，按需设置
 bash scripts/download_prebuilt.sh
 ```
 
-执行后会在 `native_net/prebuilt/` 下生成所有平台的 `.so` / `.dll` / `.dylib` 文件。
-之后直接 `flutter run` 即可，CMake 会自动检测并使用预编译文件。
+#### 手动下载（各平台）
 
-#### 方式二：从源码编译（自动回退）
+从 [Releases 页面](https://github.com/Morck-Dev/flutter-native-net/releases) 下载对应文件，按下表放到指定位置：
 
-如果没有下载预编译文件，CMake 会自动从源码编译 libcurl。
-这种方式需要联网下载 curl 和 mbedTLS 源码，首次构建较慢（3-5 分钟）。
+| 平台 | 下载文件 | 放置位置 |
+|------|---------|---------|
+| **Android** | `native_net.aar` | `native_net/android/native_net.aar` |
+| **iOS** | `native_net-xcframework.tar.gz` | 解压到 `native_net/ios/Frameworks/native_net.xcframework/` |
+| **macOS** | `native_net-xcframework.tar.gz` | 解压到 `native_net/macos/Frameworks/native_net.xcframework/` |
+| **Windows** | `native_net-windows-x64.zip` | 解压 `native_net.dll` 到 `native_net/prebuilt/windows/x64/` |
+| **Linux** | `native_net-linux-x64.tar.gz` | 解压 `libnative_net.so` 到 `native_net/prebuilt/linux/x64/` |
 
-### 各平台注意事项
+> **Android**: Gradle 首次构建也会自动从 GitHub 下载 AAR。如果网络不通，手动下载放到上述位置即可。
 
-**Windows** — 需要开启 **开发者模式**（Flutter 插件依赖符号链接）：
+> **Windows**: 需要开启开发者模式（`start ms-settings:developers`）。
 
-```
-命令行打开设置: start ms-settings:developers
-打开后启用「开发者模式」开关
-```
+#### 从源码编译（自动回退）
 
-**iOS** — 如果不使用预编译二进制，需先运行构建脚本：
+如果没有放置预编译文件，各平台会自动从源码编译 libcurl（首次需联网，约 3-5 分钟）。
 
-```bash
-bash scripts/build_curl_ios.sh
-```
+### GitHub Actions 自动构建发布
 
-**macOS** — 如果不使用预编译二进制，需先运行构建脚本：
+项目配有两个 GitHub Actions：
 
-```bash
-bash scripts/build_curl_macos.sh
-```
+**自动发布**：在 Actions 页面运行 `Create Release Tag`，输入版本号即可自动编译所有平台并创建 Release。
 
-### GitHub Actions 自动构建
-
-本项目配置了 GitHub Actions，推送 `v*` 标签时自动编译所有平台并发布到 Releases：
+**手动发布**：推送 tag 触发编译：
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
-# Actions 自动构建 -> Release 页面下载
+git tag v0.4.0 && git push origin v0.4.0
 ```
-
-也可在 GitHub Actions 页面手动触发 `workflow_dispatch`。
 
 ---
 
@@ -198,51 +192,53 @@ await client.close();
 
 ### HTTP 请求方法
 
+每个方法（`post`/`put`/`patch`/`delete`）都支持四种 body 类型，传哪个用哪个，Content-Type 自动设置：
+
 ```dart
-// GET
+// ── GET ──
 final resp = await client.get('https://api.example.com/users');
 
-// POST (字符串 body)
-final resp = await client.post(
-  'https://api.example.com/users',
-  body: '{"name":"张三"}',
-  headers: {'Content-Type': 'application/json'},
-);
+// GET 带查询参数（自动拼接和编码）
+final resp = await client.get('https://api.example.com/search',
+    queryParams: {'q': '关键词', 'page': '1'});
+// 实际请求: /search?q=%E5%85%B3%E9%94%AE%E8%AF%8D&page=1
 
-// POST (自动 JSON 编码)
-final resp = await client.postJson(
-  'https://api.example.com/users',
-  jsonBody: {'name': '张三', 'age': 30},
-);
+// ── POST ──
 
-// PUT / PUT JSON
-await client.put(url, body: '...');
-await client.putJson(url, jsonBody: {...});
+// JSON body（自动 Content-Type: application/json）
+await client.post(url, jsonBody: {'name': '张三', 'age': 30});
 
-// PATCH / PATCH JSON
-await client.patch(url, body: '...');
-await client.patchJson(url, jsonBody: {...});
+// Form 表单（自动 Content-Type: application/x-www-form-urlencoded）
+await client.post(url, formData: {'username': 'admin', 'password': '123456'});
 
-// DELETE
-await client.delete('https://api.example.com/users/1');
+// 原始字符串 body
+await client.post(url, body: '<xml>data</xml>',
+    headers: {'Content-Type': 'application/xml'});
 
-// HEAD (只获取响应头)
+// 原始字节 body
+await client.post(url, bodyBytes: myBytes);
+
+// ── PUT / PATCH / DELETE（同样支持所有 body 类型）──
+await client.put(url, jsonBody: {'name': 'updated'});
+await client.patch(url, formData: {'status': 'active'});
+await client.delete(url, jsonBody: {'id': 1});
+
+// ── HEAD ──
 final resp = await client.head(url);
 
-// Multipart (内存中的文件)
-await client.multipart(
-  'https://api.example.com/upload',
+// ── Multipart（内存中的文件）──
+await client.multipart('https://api.example.com/upload',
   files: [
     MultipartFile(
-      field: 'avatar',
-      fileName: 'photo.jpg',
-      bytes: imageBytes,
-      contentType: 'image/jpeg',
+      field: 'avatar', fileName: 'photo.jpg',
+      bytes: imageBytes, contentType: 'image/jpeg',
     ),
   ],
   formFields: {'name': '张三'},
 );
 ```
+
+**Body 类型优先级**：`jsonBody` > `formData` > `body` > `bodyBytes`，只需传一个。
 
 所有方法均支持可选参数 `headers`, `connectTimeout`, `readTimeout`。
 
