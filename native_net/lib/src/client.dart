@@ -13,18 +13,30 @@ import 'models/progress.dart';
 import 'models/request.dart';
 import 'models/response.dart';
 
-/// A callback type for intercepting requests before they are sent.
 typedef RequestInterceptor = Future<NativeNetRequest> Function(
   NativeNetRequest request,
 );
 
-/// A callback type for intercepting responses after they are received.
 typedef ResponseInterceptor = Future<NativeNetResponse> Function(
   NativeNetResponse response,
 );
 
 /// The main HTTP client powered by libcurl on native platforms
 /// and the Fetch API on web.
+///
+/// ```dart
+/// final client = NativeNetClient();
+///
+/// // JSON
+/// await client.post(url, jsonBody: {'key': 'value'});
+///
+/// // Form
+/// await client.post(url, formData: {'username': 'admin', 'password': '123'});
+///
+/// // Raw body
+/// await client.post(url, body: '<xml>data</xml>',
+///     headers: {'Content-Type': 'application/xml'});
+/// ```
 class NativeNetClient {
   final NativeNetConfig _config;
   final List<RequestInterceptor> _requestInterceptors = [];
@@ -36,12 +48,10 @@ class NativeNetClient {
   NativeNetClient({NativeNetConfig? config})
       : _config = config ?? const NativeNetConfig();
 
-  /// Adds a request interceptor that modifies requests before they are sent.
   void addRequestInterceptor(RequestInterceptor interceptor) {
     _requestInterceptors.add(interceptor);
   }
 
-  /// Adds a response interceptor that processes responses after they arrive.
   void addResponseInterceptor(ResponseInterceptor interceptor) {
     _responseInterceptors.add(interceptor);
   }
@@ -55,9 +65,6 @@ class NativeNetClient {
     }
     if (!_initialized) {
       await NativeNetPlatform.instance.initialize(_config.toMap());
-      // On Android/Linux (mbedTLS), extract the bundled CA certificate
-      // so libcurl can verify HTTPS connections. Windows (Schannel) and
-      // Apple (Secure Transport) use system CA stores automatically.
       if (Platform.isAndroid || Platform.isLinux) {
         _caBundlePath = await _extractCaBundle();
       }
@@ -65,7 +72,6 @@ class NativeNetClient {
     }
   }
 
-  /// Returns a string describing the native backend (for debugging).
   Future<String?> getPlatformVersion() {
     return NativeNetPlatform.instance.getPlatformVersion();
   }
@@ -94,7 +100,6 @@ class NativeNetClient {
 
     _applyConfigToMap(requestMap);
 
-    // Handle multipart body building in Dart
     if (processedRequest.files != null &&
         processedRequest.files!.isNotEmpty) {
       final multipartResult = _buildMultipartBody(
@@ -128,16 +133,29 @@ class NativeNetClient {
     }
   }
 
-  // ── Convenience methods ──────────────────────────────────────────────────
+  // ── Unified HTTP methods ─────────────────────────────────────────────────
+  //
+  // Each method accepts multiple body types. Only ONE should be provided:
+  //   jsonBody  -> auto Content-Type: application/json
+  //   formData  -> auto Content-Type: application/x-www-form-urlencoded
+  //   body      -> raw string (set Content-Type yourself if needed)
+  //   bodyBytes -> raw bytes
+  //
+  // If none is provided, no body is sent.
 
+  /// Sends a GET request.
   Future<NativeNetResponse> get(
     String url, {
     Map<String, String>? headers,
+    Map<String, String>? queryParams,
     Duration? connectTimeout,
     Duration? readTimeout,
   }) {
+    final finalUrl = queryParams != null && queryParams.isNotEmpty
+        ? _appendQueryParams(url, queryParams)
+        : url;
     return request(NativeNetRequest(
-      url: url,
+      url: finalUrl,
       method: HttpMethod.get,
       headers: headers,
       connectTimeout: connectTimeout,
@@ -145,234 +163,91 @@ class NativeNetClient {
     ));
   }
 
+  /// Sends a POST request.
+  ///
+  /// ```dart
+  /// // JSON body
+  /// await client.post(url, jsonBody: {'name': 'test'});
+  ///
+  /// // Form body
+  /// await client.post(url, formData: {'user': 'admin', 'pass': '123'});
+  ///
+  /// // Raw body
+  /// await client.post(url, body: 'raw text');
+  /// ```
   Future<NativeNetResponse> post(
     String url, {
     Map<String, String>? headers,
     String? body,
     Uint8List? bodyBytes,
+    dynamic jsonBody,
+    Map<String, String>? formData,
     Duration? connectTimeout,
     Duration? readTimeout,
     Duration? writeTimeout,
   }) {
-    return request(NativeNetRequest(
-      url: url,
-      method: HttpMethod.post,
-      headers: headers,
-      body: body,
-      bodyBytes: bodyBytes,
-      connectTimeout: connectTimeout,
-      readTimeout: readTimeout,
-      writeTimeout: writeTimeout,
-    ));
+    return _bodyRequest(HttpMethod.post, url,
+        headers: headers, body: body, bodyBytes: bodyBytes,
+        jsonBody: jsonBody, formData: formData,
+        connectTimeout: connectTimeout, readTimeout: readTimeout,
+        writeTimeout: writeTimeout);
   }
 
-  Future<NativeNetResponse> postJson(
-    String url, {
-    Map<String, String>? headers,
-    required dynamic jsonBody,
-    Duration? connectTimeout,
-    Duration? readTimeout,
-    Duration? writeTimeout,
-  }) {
-    final mergedHeaders = <String, String>{
-      'Content-Type': 'application/json; charset=utf-8',
-      ...?headers,
-    };
-    return request(NativeNetRequest(
-      url: url,
-      method: HttpMethod.post,
-      headers: mergedHeaders,
-      body: json.encode(jsonBody),
-      connectTimeout: connectTimeout,
-      readTimeout: readTimeout,
-      writeTimeout: writeTimeout,
-    ));
-  }
-
-  /// Sends a POST request with form data (application/x-www-form-urlencoded).
-  ///
-  /// ```dart
-  /// final response = await client.postForm(
-  ///   'https://api.example.com/login',
-  ///   formData: {'username': 'test', 'password': '123456'},
-  /// );
-  /// ```
-  Future<NativeNetResponse> postForm(
-    String url, {
-    Map<String, String>? headers,
-    required Map<String, String> formData,
-    Duration? connectTimeout,
-    Duration? readTimeout,
-    Duration? writeTimeout,
-  }) {
-    final mergedHeaders = <String, String>{
-      'Content-Type': 'application/x-www-form-urlencoded',
-      ...?headers,
-    };
-    return request(NativeNetRequest(
-      url: url,
-      method: HttpMethod.post,
-      headers: mergedHeaders,
-      body: _encodeFormData(formData),
-      connectTimeout: connectTimeout,
-      readTimeout: readTimeout,
-      writeTimeout: writeTimeout,
-    ));
-  }
-
+  /// Sends a PUT request.
   Future<NativeNetResponse> put(
     String url, {
     Map<String, String>? headers,
     String? body,
     Uint8List? bodyBytes,
+    dynamic jsonBody,
+    Map<String, String>? formData,
     Duration? connectTimeout,
     Duration? readTimeout,
     Duration? writeTimeout,
   }) {
-    return request(NativeNetRequest(
-      url: url,
-      method: HttpMethod.put,
-      headers: headers,
-      body: body,
-      bodyBytes: bodyBytes,
-      connectTimeout: connectTimeout,
-      readTimeout: readTimeout,
-      writeTimeout: writeTimeout,
-    ));
+    return _bodyRequest(HttpMethod.put, url,
+        headers: headers, body: body, bodyBytes: bodyBytes,
+        jsonBody: jsonBody, formData: formData,
+        connectTimeout: connectTimeout, readTimeout: readTimeout,
+        writeTimeout: writeTimeout);
   }
 
-  Future<NativeNetResponse> putJson(
-    String url, {
-    Map<String, String>? headers,
-    required dynamic jsonBody,
-    Duration? connectTimeout,
-    Duration? readTimeout,
-    Duration? writeTimeout,
-  }) {
-    final mergedHeaders = <String, String>{
-      'Content-Type': 'application/json; charset=utf-8',
-      ...?headers,
-    };
-    return request(NativeNetRequest(
-      url: url,
-      method: HttpMethod.put,
-      headers: mergedHeaders,
-      body: json.encode(jsonBody),
-      connectTimeout: connectTimeout,
-      readTimeout: readTimeout,
-      writeTimeout: writeTimeout,
-    ));
-  }
-
-  /// Sends a PUT request with form data (application/x-www-form-urlencoded).
-  Future<NativeNetResponse> putForm(
-    String url, {
-    Map<String, String>? headers,
-    required Map<String, String> formData,
-    Duration? connectTimeout,
-    Duration? readTimeout,
-    Duration? writeTimeout,
-  }) {
-    final mergedHeaders = <String, String>{
-      'Content-Type': 'application/x-www-form-urlencoded',
-      ...?headers,
-    };
-    return request(NativeNetRequest(
-      url: url,
-      method: HttpMethod.put,
-      headers: mergedHeaders,
-      body: _encodeFormData(formData),
-      connectTimeout: connectTimeout,
-      readTimeout: readTimeout,
-      writeTimeout: writeTimeout,
-    ));
-  }
-
+  /// Sends a DELETE request.
   Future<NativeNetResponse> delete(
     String url, {
     Map<String, String>? headers,
     String? body,
+    dynamic jsonBody,
+    Map<String, String>? formData,
     Duration? connectTimeout,
     Duration? readTimeout,
   }) {
-    return request(NativeNetRequest(
-      url: url,
-      method: HttpMethod.delete,
-      headers: headers,
-      body: body,
-      connectTimeout: connectTimeout,
-      readTimeout: readTimeout,
-    ));
+    return _bodyRequest(HttpMethod.delete, url,
+        headers: headers, body: body,
+        jsonBody: jsonBody, formData: formData,
+        connectTimeout: connectTimeout, readTimeout: readTimeout);
   }
 
+  /// Sends a PATCH request.
   Future<NativeNetResponse> patch(
     String url, {
     Map<String, String>? headers,
     String? body,
     Uint8List? bodyBytes,
+    dynamic jsonBody,
+    Map<String, String>? formData,
     Duration? connectTimeout,
     Duration? readTimeout,
     Duration? writeTimeout,
   }) {
-    return request(NativeNetRequest(
-      url: url,
-      method: HttpMethod.patch,
-      headers: headers,
-      body: body,
-      bodyBytes: bodyBytes,
-      connectTimeout: connectTimeout,
-      readTimeout: readTimeout,
-      writeTimeout: writeTimeout,
-    ));
+    return _bodyRequest(HttpMethod.patch, url,
+        headers: headers, body: body, bodyBytes: bodyBytes,
+        jsonBody: jsonBody, formData: formData,
+        connectTimeout: connectTimeout, readTimeout: readTimeout,
+        writeTimeout: writeTimeout);
   }
 
-  Future<NativeNetResponse> patchJson(
-    String url, {
-    Map<String, String>? headers,
-    required dynamic jsonBody,
-    Duration? connectTimeout,
-    Duration? readTimeout,
-    Duration? writeTimeout,
-  }) {
-    final mergedHeaders = <String, String>{
-      'Content-Type': 'application/json; charset=utf-8',
-      ...?headers,
-    };
-    return request(NativeNetRequest(
-      url: url,
-      method: HttpMethod.patch,
-      headers: mergedHeaders,
-      body: json.encode(jsonBody),
-      connectTimeout: connectTimeout,
-      readTimeout: readTimeout,
-      writeTimeout: writeTimeout,
-    ));
-  }
-
-  /// Sends a PATCH request with form data (application/x-www-form-urlencoded).
-  Future<NativeNetResponse> patchForm(
-    String url, {
-    Map<String, String>? headers,
-    required Map<String, String> formData,
-    Duration? connectTimeout,
-    Duration? readTimeout,
-    Duration? writeTimeout,
-  }) {
-    final mergedHeaders = <String, String>{
-      'Content-Type': 'application/x-www-form-urlencoded',
-      ...?headers,
-    };
-    return request(NativeNetRequest(
-      url: url,
-      method: HttpMethod.patch,
-      headers: mergedHeaders,
-      body: _encodeFormData(formData),
-      connectTimeout: connectTimeout,
-      readTimeout: readTimeout,
-      writeTimeout: writeTimeout,
-    ));
-  }
-
+  /// Sends a HEAD request.
   Future<NativeNetResponse> head(
     String url, {
     Map<String, String>? headers,
@@ -388,6 +263,7 @@ class NativeNetClient {
     ));
   }
 
+  /// Sends a multipart/form-data request (file upload).
   Future<NativeNetResponse> multipart(
     String url, {
     HttpMethod method = HttpMethod.post,
@@ -412,11 +288,6 @@ class NativeNetClient {
 
   // ── File download ────────────────────────────────────────────────────────
 
-  /// Downloads a URL directly to a local file.
-  ///
-  /// Streams directly to disk so arbitrarily large files can be downloaded
-  /// without using excessive memory. Progress reporting and cancellation
-  /// are handled by the native platform layer.
   Future<NativeNetResponse> downloadFile(
     String url,
     String savePath, {
@@ -450,11 +321,6 @@ class NativeNetClient {
 
   // ── File upload ──────────────────────────────────────────────────────────
 
-  /// Uploads a local file to a URL as multipart/form-data.
-  ///
-  /// The file is streamed directly from disk using libcurl's mime API,
-  /// so arbitrarily large files can be uploaded without loading them
-  /// entirely into memory.
   Future<NativeNetResponse> uploadFile(
     String url,
     String filePath, {
@@ -502,7 +368,60 @@ class NativeNetClient {
     return NativeNetResponse.fromMap(resultMap);
   }
 
-  // ── Config injection ───────────────────────────────────────────────────
+  // ── Internals ────────────────────────────────────────────────────────────
+
+  /// Shared logic for POST/PUT/PATCH/DELETE with auto body-type detection.
+  Future<NativeNetResponse> _bodyRequest(
+    HttpMethod method,
+    String url, {
+    Map<String, String>? headers,
+    String? body,
+    Uint8List? bodyBytes,
+    dynamic jsonBody,
+    Map<String, String>? formData,
+    Duration? connectTimeout,
+    Duration? readTimeout,
+    Duration? writeTimeout,
+  }) {
+    final mergedHeaders = <String, String>{...?headers};
+    String? resolvedBody = body;
+    Uint8List? resolvedBytes = bodyBytes;
+
+    if (jsonBody != null) {
+      resolvedBody = json.encode(jsonBody);
+      mergedHeaders.putIfAbsent(
+          'Content-Type', () => 'application/json; charset=utf-8');
+    } else if (formData != null) {
+      resolvedBody = _encodeFormData(formData);
+      mergedHeaders.putIfAbsent(
+          'Content-Type', () => 'application/x-www-form-urlencoded');
+    }
+
+    return request(NativeNetRequest(
+      url: url,
+      method: method,
+      headers: mergedHeaders.isNotEmpty ? mergedHeaders : null,
+      body: resolvedBody,
+      bodyBytes: resolvedBytes,
+      connectTimeout: connectTimeout,
+      readTimeout: readTimeout,
+      writeTimeout: writeTimeout,
+    ));
+  }
+
+  static String _encodeFormData(Map<String, String> data) {
+    return data.entries
+        .map((e) =>
+            '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}')
+        .join('&');
+  }
+
+  static String _appendQueryParams(String url, Map<String, String> params) {
+    final uri = Uri.parse(url);
+    final merged = Map<String, String>.from(uri.queryParameters)
+      ..addAll(params);
+    return uri.replace(queryParameters: merged).toString();
+  }
 
   void _applyConfigToMap(Map<String, dynamic> map) {
     map['verbose'] = _config.enableLogging;
@@ -556,21 +475,15 @@ class NativeNetClient {
     if (_config.userAgent != null) map['userAgent'] = _config.userAgent;
     if (_config.dnsServers != null) map['dnsServers'] = _config.dnsServers;
 
-    // Inject bundled CA certificate path for mbedTLS platforms
-    // (only if user hasn't specified their own CA via TlsConfig)
     if (_caBundlePath != null && map['caInfo'] == null) {
       map['caInfo'] = _caBundlePath;
     }
   }
 
-  /// Extracts the bundled Mozilla CA certificate to a temp file.
-  /// Returns the file path for use with CURLOPT_CAINFO.
   Future<String?> _extractCaBundle() async {
     try {
       final tempDir = Directory.systemTemp;
       final caFile = File('${tempDir.path}/native_net_cacert.pem');
-
-      // Only extract if not already present (persists across hot restarts)
       if (!caFile.existsSync()) {
         final data = await rootBundle.load(
           'packages/native_net/assets/cacert.pem',
@@ -579,13 +492,10 @@ class NativeNetClient {
       }
       return caFile.path;
     } catch (e) {
-      // If extraction fails, HTTPS on mbedTLS will fail with cert errors.
-      // Log but don't crash — user can provide their own CA via TlsConfig.
       return null;
     }
   }
 
-  /// Closes the client and releases native resources.
   Future<void> close() async {
     if (!_closed) {
       _closed = true;
@@ -594,17 +504,6 @@ class NativeNetClient {
       }
     }
   }
-
-  // ── Form data encoder ─────────────────────────────────────────────────
-
-  static String _encodeFormData(Map<String, String> data) {
-    return data.entries
-        .map((e) =>
-            '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}')
-        .join('&');
-  }
-
-  // ── Multipart body builder ─────────────────────────────────────────────
 
   _MultipartResult _buildMultipartBody(
     Map<String, String>? formFields,
@@ -637,10 +536,7 @@ class NativeNetClient {
 
     buffer.add('--$boundary--$crlf'.codeUnits);
 
-    return _MultipartResult(
-      bytes: buffer.toBytes(),
-      boundary: boundary,
-    );
+    return _MultipartResult(bytes: buffer.toBytes(), boundary: boundary);
   }
 }
 

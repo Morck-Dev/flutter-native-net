@@ -127,8 +127,8 @@ void main() {
       expect(response.statusCode, 200);
     });
 
-    test('postJson encodes body and sets content type', () async {
-      await client.postJson(
+    test('post with jsonBody encodes body and sets content type', () async {
+      await client.post(
         'https://api.example.com/data',
         jsonBody: {'key': 'value'},
       );
@@ -158,7 +158,7 @@ void main() {
     });
 
     test('PATCH request works correctly', () async {
-      await client.patchJson(
+      await client.patch(
         'https://api.example.com/data/1',
         jsonBody: {'field': 'patched'},
       );

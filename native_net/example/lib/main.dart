@@ -190,7 +190,7 @@ class _HomePageState extends State<HomePage> {
                   color: Colors.blue,
                   onPressed: _isLoading ? null : () => _performRequest(
                     'POST /posts',
-                    () => _client.postJson(
+                    () => _client.post(
                       'https://jsonplaceholder.typicode.com/posts',
                       jsonBody: {
                         'title': 'NativeNet Test',
@@ -205,7 +205,7 @@ class _HomePageState extends State<HomePage> {
                   color: Colors.orange,
                   onPressed: _isLoading ? null : () => _performRequest(
                     'PUT /posts/1',
-                    () => _client.putJson(
+                    () => _client.put(
                       'https://jsonplaceholder.typicode.com/posts/1',
                       jsonBody: {
                         'id': 1,
@@ -229,7 +229,7 @@ class _HomePageState extends State<HomePage> {
                   color: Colors.purple,
                   onPressed: _isLoading ? null : () => _performRequest(
                     'PATCH /posts/1',
-                    () => _client.patchJson(
+                    () => _client.patch(
                       'https://jsonplaceholder.typicode.com/posts/1',
                       jsonBody: {'title': 'Patched Title'},
                     ),
