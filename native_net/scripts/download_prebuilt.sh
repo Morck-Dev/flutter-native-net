@@ -62,20 +62,9 @@ echo ""
 PREBUILT="$PLUGIN_DIR/prebuilt"
 mkdir -p "$PREBUILT"
 
-# Android: download AAR and extract .so files into jniLibs
-if download "native_net.aar" "/tmp/nn_aar_$$.aar"; then
-    JNILIBS="$PLUGIN_DIR/android/src/main/jniLibs"
-    rm -rf "$JNILIBS"
-    mkdir -p "$JNILIBS"
-    # AAR is a zip; .so files are in jni/{abi}/
-    unzip -qo "/tmp/nn_aar_$$.aar" "jni/*" -d "/tmp/nn_aar_extract_$$/"
-    if [ -d "/tmp/nn_aar_extract_$$/jni" ]; then
-        cp -r /tmp/nn_aar_extract_$$/jni/* "$JNILIBS/"
-        echo "[native_net]   -> android/src/main/jniLibs/"
-        ls -R "$JNILIBS/" 2>/dev/null | head -10
-    fi
-    rm -rf "/tmp/nn_aar_$$" "/tmp/nn_aar_extract_$$"
-fi
+# Android: AAR is downloaded automatically by Gradle on first build.
+# No manual download needed. (See android/build.gradle.kts)
+echo "[native_net] Android: AAR is auto-downloaded by Gradle on first build."
 
 # iOS XCFramework
 if download "native_net-xcframework.tar.gz" "/tmp/nn_xcfw_$$.tar.gz"; then
@@ -111,7 +100,7 @@ download "native_net-linux-x64.tar.gz" "/tmp/nn_linux_$$.tar.gz" && {
 
 echo ""
 echo "[native_net] Done. Files:"
-find "$PLUGIN_DIR/android/src/main/jniLibs" "$PLUGIN_DIR/ios/Frameworks" \
+find "$PLUGIN_DIR/ios/Frameworks" \
      "$PLUGIN_DIR/macos/Frameworks" "$PREBUILT" \
      -type f 2>/dev/null | sort | sed "s|$PLUGIN_DIR/|  |"
 echo ""

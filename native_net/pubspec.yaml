@@ -26,7 +26,8 @@ flutter:
   plugin:
     platforms:
       android:
-        ffiPlugin: true
+        package: com.example.native_net
+        pluginClass: NativeNetPlugin
       ios:
         ffiPlugin: true
       linux:
