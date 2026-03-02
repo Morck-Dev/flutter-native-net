@@ -154,9 +154,15 @@ set(CURL_INCLUDE_DIRS
 # Re-enable install() and export() for our own targets
 set(_NN_SKIP_EXPORT FALSE)
 
-# --- native_net shared library ---------------------------------------------
+# --- native_net library ----------------------------------------------------
 
-add_library(native_net SHARED native_net_ffi.c)
+# iOS requires static libraries for third-party code (no dynamic loading).
+# All other platforms use shared libraries loaded via dart:ffi.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_library(native_net STATIC native_net_ffi.c)
+else()
+    add_library(native_net SHARED native_net_ffi.c)
+endif()
 
 target_include_directories(native_net PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

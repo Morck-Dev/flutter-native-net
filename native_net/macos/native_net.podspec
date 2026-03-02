@@ -1,14 +1,10 @@
 #
-# macOS podspec - supports prebuilt XCFramework or build from source.
+# macOS podspec
 #
 Pod::Spec.new do |s|
   s.name             = 'native_net'
-  s.version          = '0.3.0'
+  s.version          = '0.4.0'
   s.summary          = 'Flutter plugin for native HTTP networking using libcurl.'
-  s.description      = <<-DESC
-A Flutter FFI plugin that wraps libcurl for HTTP networking on macOS.
-Uses prebuilt XCFramework or builds libcurl from source with Secure Transport.
-                       DESC
   s.homepage         = 'https://github.com/Morck-Dev/flutter-native-net'
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'Example' => 'example@example.com' }
@@ -16,31 +12,40 @@ Uses prebuilt XCFramework or builds libcurl from source with Secure Transport.
   s.dependency 'FlutterMacOS'
   s.platform         = :osx, '10.11'
 
-  xcfw_path = File.join(__dir__, 'Frameworks', 'native_net.xcframework')
+  s.source_files = 'Classes/**/*.{c,h}'
 
-  if File.exist?(xcfw_path)
-    # --- Path A: Prebuilt XCFramework ---
-    s.vendored_frameworks = 'Frameworks/native_net.xcframework'
-    s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
-    Pod::UI.puts "[native_net] Using prebuilt XCFramework"
-  else
-    # --- Path B: Build from source ---
-    s.source_files = 'Classes/**/*.{c,h}'
-    s.script_phase = {
-      :name => 'Build libcurl for macOS',
-      :script => 'bash "${PODS_TARGET_SRCROOT}/../scripts/build_curl_macos.sh" "${PODS_TARGET_SRCROOT}/Frameworks/curl-macos"',
-      :execution_position => :before_compile,
-      :shell_path => '/bin/bash',
-    }
-    s.pod_target_xcconfig = {
-      'DEFINES_MODULE' => 'YES',
-      'HEADER_SEARCH_PATHS' => [
-        '"$(PODS_TARGET_SRCROOT)/../src"',
-        '"$(PODS_TARGET_SRCROOT)/Frameworks/curl-macos/include"',
-      ].join(' '),
-      'LIBRARY_SEARCH_PATHS' => '"$(PODS_TARGET_SRCROOT)/Frameworks/curl-macos/lib"',
-      'OTHER_LDFLAGS' => '-lcurl',
-    }
-    Pod::UI.puts "[native_net] No prebuilt XCFramework, will build from source"
-  end
+  s.pod_target_xcconfig = {
+    'DEFINES_MODULE' => 'YES',
+    'HEADER_SEARCH_PATHS' => [
+      '"$(PODS_TARGET_SRCROOT)/../src"',
+      '"$(PODS_TARGET_SRCROOT)/Frameworks/curl-macos/include"',
+    ].join(' '),
+    'LIBRARY_SEARCH_PATHS' => '"$(PODS_TARGET_SRCROOT)/Frameworks/curl-macos/lib"',
+    'OTHER_LDFLAGS' => '-lcurl -framework Security -framework CoreFoundation -framework SystemConfiguration',
+    'GCC_SYMBOLS_PRIVATE_EXTERN' => 'NO',
+    'OTHER_CFLAGS' => '-fvisibility=default',
+  }
+
+  s.script_phase = {
+    :name => 'Ensure libcurl for macOS',
+    :script => <<-SCRIPT
+      CURL_DIR="${PODS_TARGET_SRCROOT}/Frameworks/curl-macos"
+      if [ -f "$CURL_DIR/lib/libcurl.a" ]; then
+        echo "[native_net] Using existing libcurl at $CURL_DIR"
+        exit 0
+      fi
+
+      echo "[native_net] Building libcurl for macOS..."
+      SCRIPT_PATH="${PODS_TARGET_SRCROOT}/../scripts/build_curl_macos.sh"
+      if [ -f "$SCRIPT_PATH" ]; then
+        bash "$SCRIPT_PATH" "$CURL_DIR"
+      else
+        echo "[native_net] ERROR: build_curl_macos.sh not found"
+        echo "[native_net] Run: bash native_net/scripts/download_prebuilt.sh"
+        exit 1
+      fi
+    SCRIPT
+    :execution_position => :before_compile,
+    :shell_path => '/bin/bash',
+  }
 end
