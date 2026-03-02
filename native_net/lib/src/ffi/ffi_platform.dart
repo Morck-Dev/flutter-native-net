@@ -14,8 +14,8 @@ NativeNetPlatform createDefaultPlatform() => FfiNativeNetPlatform();
 
 /// Platform implementation that uses libcurl via dart:ffi.
 class FfiNativeNetPlatform extends NativeNetPlatform {
-  bool _globalInitDone = false;
-  late final NativeNetBindings _bindings;
+  static bool _globalInitDone = false;
+  static NativeNetBindings? _bindings;
 
   @override
   Future<String?> getPlatformVersion() async => 'libcurl (native FFI)';
@@ -25,7 +25,7 @@ class FfiNativeNetPlatform extends NativeNetPlatform {
     if (!_globalInitDone) {
       final lib = openNativeLibrary();
       _bindings = NativeNetBindings(lib);
-      final code = _bindings.init();
+      final code = _bindings!.init();
       if (code != 0) {
         throw NativeNetException(
           message: 'curl_global_init failed with code $code',
@@ -53,10 +53,9 @@ class FfiNativeNetPlatform extends NativeNetPlatform {
 
   @override
   Future<void> dispose() async {
-    if (_globalInitDone) {
-      _bindings.cleanup();
-      _globalInitDone = false;
-    }
+    // curl_global_init/cleanup are process-level.
+    // Don't reset _globalInitDone — the library stays loaded for the
+    // process lifetime. Multiple NativeNetClient instances share it.
   }
 }
 
