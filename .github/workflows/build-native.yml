@@ -84,11 +84,16 @@ jobs:
           done
 
       - name: Package AAR
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           mkdir -p aar/jni/arm64-v8a aar/jni/armeabi-v7a aar/jni/x86_64
           cp build-arm64-v8a/libnative_net.so   aar/jni/arm64-v8a/
           cp build-armeabi-v7a/libnative_net.so  aar/jni/armeabi-v7a/
           cp build-x86_64/libnative_net.so       aar/jni/x86_64/
+
+          echo "=== .so sizes (after strip) ==="
+          ls -lh aar/jni/*/libnative_net.so
 
           # Minimal AndroidManifest.xml
           echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.native_net"></manifest>' > aar/AndroidManifest.xml
@@ -135,11 +140,18 @@ jobs:
 
       - name: Create macOS universal binary
         run: |
+          # Strip debug symbols
+          strip -x build-macos-arm64/libnative_net.dylib
+          strip -x build-macos-x64/libnative_net.dylib
+
           mkdir -p universal-macos
           lipo -create \
             build-macos-arm64/libnative_net.dylib \
             build-macos-x64/libnative_net.dylib \
             -output universal-macos/libnative_net.dylib
+
+          echo "=== macOS universal size ==="
+          ls -lh universal-macos/libnative_net.dylib
 
       - name: Build iOS arm64
         run: |
@@ -164,15 +176,15 @@ jobs:
 
       - name: Create XCFramework
         run: |
-          # Find the actual library files
-          echo "=== macOS universal ==="
-          ls -la universal-macos/
-          echo "=== iOS arm64 ==="
-          find build-ios-arm64 -name "libnative_net.*" | head -5
-          echo "=== iOS Simulator arm64 ==="
-          find build-ios-sim-arm64 -name "libnative_net.*" | head -5
+          # Strip iOS binaries
+          strip -x build-ios-arm64/libnative_net.dylib 2>/dev/null || true
+          strip -x build-ios-sim-arm64/libnative_net.dylib 2>/dev/null || true
 
-          # Prepare header directory
+          echo "=== Library sizes after strip ==="
+          ls -lh universal-macos/libnative_net.dylib
+          ls -lh build-ios-arm64/libnative_net.dylib 2>/dev/null || true
+          ls -lh build-ios-sim-arm64/libnative_net.dylib 2>/dev/null || true
+
           mkdir -p headers
           cp native_net/src/native_net_ffi.h headers/
 

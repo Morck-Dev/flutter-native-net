@@ -104,6 +104,8 @@ message(STATUS "[native_net] Building libcurl ...")
 set(BUILD_CURL_EXE       OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS    OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING        OFF CACHE BOOL "" FORCE)
+set(BUILD_LIBCURL_DOCS   OFF CACHE BOOL "" FORCE)
+set(ENABLE_CURL_MANUAL   OFF CACHE BOOL "" FORCE)
 set(HTTP_ONLY             ON CACHE BOOL "" FORCE)
 set(CURL_DISABLE_LDAP    ON CACHE BOOL "" FORCE)
 set(CURL_DISABLE_LDAPS   ON CACHE BOOL "" FORCE)
@@ -113,6 +115,10 @@ set(USE_LIBIDN2          OFF CACHE BOOL "" FORCE)
 set(CURL_USE_LIBIDN2     OFF CACHE BOOL "" FORCE)
 set(USE_NGHTTP2          OFF CACHE BOOL "" FORCE)
 set(CURL_DISABLE_ALTSVC  ON CACHE BOOL "" FORCE)
+set(CURL_DISABLE_DOH     ON CACHE BOOL "" FORCE)
+set(CURL_DISABLE_NETRC   ON CACHE BOOL "" FORCE)
+set(CURL_DISABLE_NTLM    ON CACHE BOOL "" FORCE)
+set(CURL_DISABLE_VERBOSE_STRINGS ON CACHE BOOL "" FORCE)
 
 if(ANDROID OR (UNIX AND NOT APPLE))
     set(CURL_USE_OPENSSL   OFF CACHE BOOL "" FORCE)
@@ -159,7 +165,7 @@ target_include_directories(native_net PRIVATE
 
 target_link_libraries(native_net PRIVATE ${CURL_TARGETS})
 
-# Apple platforms: link system frameworks needed by Secure Transport
+# Apple: link system frameworks for Secure Transport
 if(APPLE)
     target_link_libraries(native_net PRIVATE
         "-framework Security"
@@ -170,13 +176,34 @@ endif()
 
 if(MSVC)
     target_compile_definitions(native_net PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    # Optimize for size on non-MSVC compilers (GCC/Clang)
+    target_compile_options(native_net PRIVATE -Os)
 endif()
 
 set_target_properties(native_net PROPERTIES
-    C_VISIBILITY_PRESET       default
+    C_VISIBILITY_PRESET       hidden
     POSITION_INDEPENDENT_CODE ON
+)
+
+# Only export our FFI functions, hide everything else
+set_target_properties(native_net PROPERTIES
+    C_VISIBILITY_PRESET hidden
 )
 
 if(ANDROID)
     set_target_properties(native_net PROPERTIES OUTPUT_NAME "native_net")
+    # Strip debug symbols from the final .so (huge size reduction)
+    add_custom_command(TARGET native_net POST_BUILD
+        COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:native_net>
+        COMMENT "[native_net] Stripping debug symbols from libnative_net.so"
+    )
+endif()
+
+# Strip on Linux too
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+    add_custom_command(TARGET native_net POST_BUILD
+        COMMAND strip --strip-unneeded $<TARGET_FILE:native_net> || true
+        COMMENT "[native_net] Stripping debug symbols"
+    )
 endif()
