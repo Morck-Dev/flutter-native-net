@@ -482,16 +482,22 @@ class NativeNetClient {
 
   Future<String?> _extractCaBundle() async {
     try {
-      final tempDir = Directory.systemTemp;
-      final caFile = File('${tempDir.path}/native_net_cacert.pem');
-      if (!caFile.existsSync()) {
-        final data = await rootBundle.load(
-          'packages/native_net/assets/cacert.pem',
-        );
-        await caFile.writeAsBytes(data.buffer.asUint8List(), flush: true);
-      }
+      // Find a writable directory that works in both debug and release mode.
+      // Directory.systemTemp works on desktop; on Android it maps to the
+      // app's cache dir which is always writable.
+      final dir = Directory.systemTemp;
+      final caFile = File('${dir.path}/native_net_cacert.pem');
+
+      // Always re-extract in case the file was corrupted or deleted
+      final data = await rootBundle.load(
+        'packages/native_net/assets/cacert.pem',
+      );
+      final bytes = data.buffer.asUint8List();
+      if (bytes.isEmpty) return null;
+
+      await caFile.writeAsBytes(bytes, flush: true);
       return caFile.path;
-    } catch (e) {
+    } catch (_) {
       return null;
     }
   }
