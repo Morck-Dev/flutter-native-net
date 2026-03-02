@@ -19,14 +19,18 @@ project(native_net VERSION 0.3.0 LANGUAGES C)
 
 option(NATIVE_NET_FORCE_BUILD "Force building from source even if prebuilt exists" OFF)
 
-# We need to disable install() calls from curl and mbedtls.
-# curl's install(EXPORT) validates that all linked targets are exported,
-# which fails when mbedtls is added as a sub-build. The solution is to
-# override install() with a conditional no-op.
-set(NATIVE_NET_SKIP_INSTALL TRUE)
+# Disable install() AND export() from curl/mbedtls.
+# curl calls both install(EXPORT CURLTargets ...) and export(TARGETS libcurl_static ...),
+# and both fail when mbedtls targets aren't in the export set.
+set(_NN_SKIP_EXPORT TRUE)
 macro(install)
-    if(NOT NATIVE_NET_SKIP_INSTALL)
+    if(NOT _NN_SKIP_EXPORT)
         _install(${ARGV})
+    endif()
+endmacro()
+macro(export)
+    if(NOT _NN_SKIP_EXPORT)
+        _export(${ARGV})
     endif()
 endmacro()
 
@@ -135,8 +139,8 @@ set(CURL_INCLUDE_DIRS
     ${curl_BINARY_DIR}/include
 )
 
-# Re-enable install() for our own targets
-set(NATIVE_NET_SKIP_INSTALL FALSE)
+# Re-enable install() and export() for our own targets
+set(_NN_SKIP_EXPORT FALSE)
 
 # --- native_net shared library ---------------------------------------------
 
