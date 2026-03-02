@@ -17,6 +17,10 @@ endif()
 
 project(native_net VERSION 0.3.0 LANGUAGES C)
 
+# All sub-builds (mbedtls, curl) must produce PIC code so they
+# can be linked into our shared library (.so/.dylib/.dll).
+set(CMAKE_POSITION_INDEPENDENT_CODE ON CACHE BOOL "" FORCE)
+
 option(NATIVE_NET_FORCE_BUILD "Force building from source even if prebuilt exists" OFF)
 
 # Disable install() AND export() from curl/mbedtls.
@@ -79,6 +83,8 @@ if(ANDROID OR (UNIX AND NOT APPLE))
     message(STATUS "[native_net] Building mbedTLS ...")
     set(ENABLE_TESTING  OFF CACHE BOOL "" FORCE)
     set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+    # mbedTLS static libs must be PIC to link into our shared library
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON CACHE BOOL "" FORCE)
 
     FetchContent_Declare(mbedtls
         URL      https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.2/mbedtls-3.6.2.tar.bz2
