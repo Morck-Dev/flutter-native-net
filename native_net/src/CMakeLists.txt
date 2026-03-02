@@ -19,10 +19,16 @@ project(native_net VERSION 0.3.0 LANGUAGES C)
 
 option(NATIVE_NET_FORCE_BUILD "Force building from source even if prebuilt exists" OFF)
 
-# Redirect install() to a harmless build-local directory.
-# This prevents INSTALL target failures on Windows (Flutter MSVC) and
-# also fixes curl export-set errors when mbedtls is a sub-build.
-set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/_nn_install" CACHE PATH "" FORCE)
+# We need to disable install() calls from curl and mbedtls.
+# curl's install(EXPORT) validates that all linked targets are exported,
+# which fails when mbedtls is added as a sub-build. The solution is to
+# override install() with a conditional no-op.
+set(NATIVE_NET_SKIP_INSTALL TRUE)
+macro(install)
+    if(NOT NATIVE_NET_SKIP_INSTALL)
+        _install(${ARGV})
+    endif()
+endmacro()
 
 # === Check for prebuilt binary ============================================
 
@@ -128,6 +134,9 @@ set(CURL_INCLUDE_DIRS
     ${curl_SOURCE_DIR}/include
     ${curl_BINARY_DIR}/include
 )
+
+# Re-enable install() for our own targets
+set(NATIVE_NET_SKIP_INSTALL FALSE)
 
 # --- native_net shared library ---------------------------------------------
 
