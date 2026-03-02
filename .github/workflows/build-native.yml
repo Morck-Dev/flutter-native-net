@@ -15,7 +15,7 @@ env:
 
 jobs:
   # =========================================================================
-  # Windows x64
+  # Windows x64 -> native_net.dll
   # =========================================================================
   build-windows:
     runs-on: windows-latest
@@ -28,15 +28,15 @@ jobs:
       - name: Collect
         shell: bash
         run: |
-          mkdir -p out/windows/x64
-          cp build/Release/native_net.dll out/windows/x64/
+          mkdir -p out
+          cp build/Release/native_net.dll out/
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: out/windows/x64/
+          path: out/
 
   # =========================================================================
-  # Linux x64
+  # Linux x64 -> libnative_net.so
   # =========================================================================
   build-linux:
     runs-on: ubuntu-22.04
@@ -48,88 +48,18 @@ jobs:
           cmake --build build --config Release --parallel
       - name: Collect
         run: |
-          mkdir -p out/linux/x64
-          cp build/libnative_net.so out/linux/x64/
+          mkdir -p out
+          cp build/libnative_net.so out/
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x64
-          path: out/linux/x64/
+          path: out/
 
   # =========================================================================
-  # macOS universal (arm64 + x86_64)
-  # =========================================================================
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build arm64
-        run: |
-          cmake -S native_net/src -B build-arm64 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 \
-            -DNATIVE_NET_FORCE_BUILD=ON
-          cmake --build build-arm64 --config Release --parallel
-      - name: Build x86_64
-        run: |
-          cmake -S native_net/src -B build-x64 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 \
-            -DNATIVE_NET_FORCE_BUILD=ON
-          cmake --build build-x64 --config Release --parallel
-      - name: Create universal binary
-        run: |
-          mkdir -p out/macos
-          lipo -create \
-            build-arm64/libnative_net.dylib \
-            build-x64/libnative_net.dylib \
-            -output out/macos/libnative_net.dylib
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-universal
-          path: out/macos/
-
-  # =========================================================================
-  # iOS arm64 (static library)
-  # =========================================================================
-  build-ios:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build
-        run: |
-          cmake -S native_net/src -B build-ios \
-            -DCMAKE_SYSTEM_NAME=iOS \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=9.0 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DNATIVE_NET_FORCE_BUILD=ON
-          cmake --build build-ios --config Release --parallel
-      - name: Collect
-        run: |
-          mkdir -p out/ios
-          find build-ios -name "*.dylib" -o -name "*.a" | while read f; do
-            echo "Found: $f"
-          done
-          # iOS may produce .dylib or .a depending on CMake config
-          cp build-ios/libnative_net.dylib out/ios/ 2>/dev/null || true
-          cp build-ios/libnative_net.a out/ios/ 2>/dev/null || true
-          cp native_net/src/native_net_ffi.h out/ios/
-          ls -la out/ios/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ios-arm64
-          path: out/ios/
-
-  # =========================================================================
-  # Android (arm64-v8a, armeabi-v7a, x86_64)
+  # Android all ABIs -> native_net.aar
   # =========================================================================
   build-android:
     runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        abi: [arm64-v8a, armeabi-v7a, x86_64]
     steps:
       - uses: actions/checkout@v4
       - name: Set up NDK
@@ -137,52 +67,170 @@ jobs:
         id: setup-ndk
         with:
           ndk-version: r26d
-      - name: Build for ${{ matrix.abi }}
+
+      - name: Build all ABIs
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          cmake -S native_net/src -B build \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=${{ matrix.abi }} \
-            -DANDROID_PLATFORM=android-21 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DNATIVE_NET_FORCE_BUILD=ON
-          cmake --build build --config Release --parallel
-      - name: Collect
+          for ABI in arm64-v8a armeabi-v7a x86_64; do
+            echo "=== Building $ABI ==="
+            cmake -S native_net/src -B build-$ABI \
+              -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+              -DANDROID_ABI=$ABI \
+              -DANDROID_PLATFORM=android-21 \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DNATIVE_NET_FORCE_BUILD=ON
+            cmake --build build-$ABI --config Release --parallel
+          done
+
+      - name: Package AAR
         run: |
-          mkdir -p out/android/${{ matrix.abi }}
-          cp build/libnative_net.so out/android/${{ matrix.abi }}/
+          # AAR is a zip with specific structure
+          mkdir -p aar_staging/jni/arm64-v8a aar_staging/jni/armeabi-v7a aar_staging/jni/x86_64
+          cp build-arm64-v8a/libnative_net.so   aar_staging/jni/arm64-v8a/
+          cp build-armeabi-v7a/libnative_net.so  aar_staging/jni/armeabi-v7a/
+          cp build-x86_64/libnative_net.so       aar_staging/jni/x86_64/
+
+          # Minimal AndroidManifest.xml
+          cat > aar_staging/AndroidManifest.xml << 'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.example.native_net">
+          </manifest>
+          EOF
+
+          # Empty classes.jar (required by AAR spec)
+          cd aar_staging && jar cf classes.jar -C /dev/null . 2>/dev/null || (mkdir empty && cd empty && jar cf ../classes.jar . && cd .. && rm -rf empty)
+
+          # Create AAR
+          cd aar_staging && zip -r ../native_net.aar . && cd ..
+          ls -lh native_net.aar
+
       - uses: actions/upload-artifact@v4
         with:
-          name: android-${{ matrix.abi }}
-          path: out/android/${{ matrix.abi }}/
+          name: android-aar
+          path: native_net.aar
+
+  # =========================================================================
+  # Apple (iOS + macOS) -> native_net.xcframework
+  # =========================================================================
+  build-apple:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build macOS arm64
+        run: |
+          cmake -S native_net/src -B build-macos-arm64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 \
+            -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build-macos-arm64 --config Release --parallel
+
+      - name: Build macOS x86_64
+        run: |
+          cmake -S native_net/src -B build-macos-x64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 \
+            -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build-macos-x64 --config Release --parallel
+
+      - name: Create macOS universal binary
+        run: |
+          mkdir -p universal-macos
+          lipo -create \
+            build-macos-arm64/libnative_net.dylib \
+            build-macos-x64/libnative_net.dylib \
+            -output universal-macos/libnative_net.dylib
+
+      - name: Build iOS arm64
+        run: |
+          cmake -S native_net/src -B build-ios-arm64 \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=9.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build-ios-arm64 --config Release --parallel
+
+      - name: Build iOS Simulator arm64
+        run: |
+          cmake -S native_net/src -B build-ios-sim-arm64 \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=9.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build-ios-sim-arm64 --config Release --parallel
+
+      - name: Create XCFramework
+        run: |
+          # Find the actual library files
+          echo "=== macOS universal ==="
+          ls -la universal-macos/
+          echo "=== iOS arm64 ==="
+          find build-ios-arm64 -name "libnative_net.*" | head -5
+          echo "=== iOS Simulator arm64 ==="
+          find build-ios-sim-arm64 -name "libnative_net.*" | head -5
+
+          # Prepare header directory
+          mkdir -p headers
+          cp native_net/src/native_net_ffi.h headers/
+
+          # Create XCFramework
+          xcodebuild -create-xcframework \
+            -library universal-macos/libnative_net.dylib \
+            -headers headers/ \
+            -library build-ios-arm64/libnative_net.dylib \
+            -headers headers/ \
+            -library build-ios-sim-arm64/libnative_net.dylib \
+            -headers headers/ \
+            -output native_net.xcframework
+
+          echo "=== XCFramework structure ==="
+          find native_net.xcframework -type f | head -20
+
+          # Package
+          tar czf native_net-xcframework.tar.gz native_net.xcframework/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apple-xcframework
+          path: native_net-xcframework.tar.gz
 
   # =========================================================================
   # Package & Release
   # =========================================================================
   release:
-    needs: [build-windows, build-linux, build-macos, build-ios, build-android]
+    needs: [build-windows, build-linux, build-android, build-apple]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Package archives
+
+      - name: Prepare release assets
         run: |
           mkdir -p release
+
+          # Android AAR (all ABIs in one file)
+          cp artifacts/android-aar/native_net.aar release/
+
+          # Apple XCFramework (iOS + macOS in one package)
+          cp artifacts/apple-xcframework/native_net-xcframework.tar.gz release/
+
+          # Windows
           cd artifacts/windows-x64 && zip -r ../../release/native_net-windows-x64.zip . && cd ../..
+
+          # Linux
           cd artifacts/linux-x64 && tar czf ../../release/native_net-linux-x64.tar.gz . && cd ../..
-          cd artifacts/macos-universal && tar czf ../../release/native_net-macos-universal.tar.gz . && cd ../..
-          cd artifacts/ios-arm64 && tar czf ../../release/native_net-ios-arm64.tar.gz . && cd ../..
-          mkdir -p android-all
-          for abi in arm64-v8a armeabi-v7a x86_64; do
-            mkdir -p android-all/$abi
-            cp artifacts/android-$abi/* android-all/$abi/
-          done
-          cd android-all && tar czf ../release/native_net-android-all.tar.gz . && cd ..
-          echo "=== Release artifacts ==="
+
+          echo "=== Release assets ==="
           ls -lh release/
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -191,15 +239,14 @@ jobs:
           body: |
             Prebuilt `native_net` binaries (libcurl ${{ env.CURL_VERSION }} + mbedTLS ${{ env.MBEDTLS_VERSION }}).
 
-            | Platform | File | TLS Backend |
-            |----------|------|-------------|
-            | Windows x64 | `native_net-windows-x64.zip` | Schannel |
-            | Linux x64 | `native_net-linux-x64.tar.gz` | mbedTLS |
-            | macOS universal | `native_net-macos-universal.tar.gz` | Secure Transport |
-            | iOS arm64 | `native_net-ios-arm64.tar.gz` | Secure Transport |
-            | Android (all ABIs) | `native_net-android-all.tar.gz` | mbedTLS |
+            | File | Platform | Contents |
+            |------|----------|----------|
+            | `native_net.aar` | Android | arm64-v8a + armeabi-v7a + x86_64 |
+            | `native_net-xcframework.tar.gz` | iOS + macOS | arm64 (device) + arm64 (sim) + universal macOS |
+            | `native_net-windows-x64.zip` | Windows | x64 DLL (Schannel) |
+            | `native_net-linux-x64.tar.gz` | Linux | x64 SO (mbedTLS) |
 
-            **Usage:**
+            **Quick setup:**
             ```bash
             cd native_net && bash scripts/download_prebuilt.sh
             ```

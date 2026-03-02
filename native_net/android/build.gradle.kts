@@ -18,6 +18,8 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // For local AAR files
+        flatDir { dirs("libs") }
     }
 }
 
@@ -26,9 +28,12 @@ plugins {
     id("kotlin-android")
 }
 
+// Check if prebuilt AAR exists
+val prebuiltAar = file("libs/native_net.aar")
+val usePrebuiltAar = prebuiltAar.exists()
+
 android {
     namespace = "com.example.native_net"
-
     compileSdk = 36
 
     compileOptions {
@@ -52,11 +57,12 @@ android {
     defaultConfig {
         minSdk = 21
 
-        // NDK / CMake build for the native_net FFI library (libcurl wrapper)
-        externalNativeBuild {
-            cmake {
-                // Build libcurl with mbedTLS for Android TLS support
-                arguments("-DANDROID_STL=c++_shared")
+        if (!usePrebuiltAar) {
+            // Build from source via CMake (fallback when no prebuilt AAR)
+            externalNativeBuild {
+                cmake {
+                    arguments("-DANDROID_STL=c++_shared")
+                }
             }
         }
 
@@ -65,9 +71,11 @@ android {
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("../src/CMakeLists.txt")
+    if (!usePrebuiltAar) {
+        externalNativeBuild {
+            cmake {
+                path = file("../src/CMakeLists.txt")
+            }
         }
     }
 
@@ -87,6 +95,16 @@ android {
 }
 
 dependencies {
+    if (usePrebuiltAar) {
+        // Use prebuilt AAR (contains .so for all ABIs)
+        implementation(files("libs/native_net.aar"))
+    }
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
+}
+
+if (usePrebuiltAar) {
+    logger.lifecycle("[native_net] Using prebuilt AAR: ${prebuiltAar.absolutePath}")
+} else {
+    logger.lifecycle("[native_net] No prebuilt AAR found, will build from source via CMake")
 }

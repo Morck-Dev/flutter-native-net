@@ -2,81 +2,105 @@
 # =============================================================================
 # download_prebuilt.sh
 #
-# Downloads prebuilt native_net binaries from the latest GitHub Release
-# and extracts them into native_net/prebuilt/.
+# Downloads prebuilt native_net binaries from GitHub Releases and places
+# them where the Flutter plugin expects them:
+#   android/libs/native_net.aar          (all ABIs in one file)
+#   ios/Frameworks/native_net.xcframework.tar.gz -> extracted
+#   macos/Frameworks/  (included in xcframework)
+#   prebuilt/windows/x64/native_net.dll
+#   prebuilt/linux/x64/libnative_net.so
 #
 # Usage:
 #   bash scripts/download_prebuilt.sh                    # latest release
-#   bash scripts/download_prebuilt.sh v0.3.0             # specific tag
-#   REPO=user/repo bash scripts/download_prebuilt.sh     # custom repo
+#   bash scripts/download_prebuilt.sh v0.3.1             # specific tag
 # =============================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PREBUILT_DIR="$PLUGIN_DIR/prebuilt"
 REPO="${REPO:-Morck-Dev/flutter-native-net}"
 TAG="${1:-latest}"
 
-echo "[native_net] Downloading prebuilt binaries from $REPO ($TAG) ..."
-
-# Determine the download URL prefix
+# Resolve "latest" to actual tag name
 if [ "$TAG" = "latest" ]; then
-    API_URL="https://api.github.com/repos/$REPO/releases/latest"
-else
-    API_URL="https://api.github.com/repos/$REPO/releases/tags/$TAG"
+    echo "[native_net] Resolving latest release tag ..."
+    TAG=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest" | \
+        grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+    if [ -z "$TAG" ]; then
+        echo "[native_net] ERROR: Could not resolve latest release tag."
+        echo "[native_net] Try specifying a tag: bash scripts/download_prebuilt.sh v0.3.0"
+        exit 1
+    fi
+    echo "[native_net] Latest release: $TAG"
 fi
 
-# Get release asset URLs
-echo "[native_net] Fetching release info ..."
-RELEASE_JSON=$(curl -sL "$API_URL")
+# GitHub release download URL pattern (no API/JSON parsing needed)
+BASE_URL="https://github.com/$REPO/releases/download/$TAG"
 
-download_asset() {
-    local name="$1"
-    local dest_dir="$2"
-    local url
+download() {
+    local file="$1"
+    local dest="$2"
+    local url="$BASE_URL/$file"
 
-    url=$(echo "$RELEASE_JSON" | grep -o "\"browser_download_url\"[[:space:]]*:[[:space:]]*\"[^\"]*${name}[^\"]*\"" | head -1 | sed 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\(.*\)"/\1/')
+    echo "[native_net] Downloading $file ..."
+    mkdir -p "$(dirname "$dest")"
 
-    if [ -z "$url" ]; then
-        echo "[native_net] WARNING: $name not found in release, skipping."
+    if curl -fSL --retry 3 --retry-delay 5 -o "$dest" "$url"; then
+        echo "[native_net]   -> $dest"
+        return 0
+    else
+        echo "[native_net]   WARNING: Failed to download $file (HTTP error)"
+        rm -f "$dest"
         return 1
     fi
-
-    echo "[native_net] Downloading $name ..."
-    mkdir -p "$dest_dir"
-
-    local tmp_file="/tmp/native_net_$$_$(basename "$name")"
-    if ! curl -sL --retry 3 --retry-delay 5 -o "$tmp_file" "$url"; then
-        echo "[native_net] ERROR: Failed to download $name"
-        rm -f "$tmp_file"
-        return 1
-    fi
-
-    echo "[native_net] Extracting to $dest_dir ..."
-    case "$name" in
-        *.zip)    unzip -qo "$tmp_file" -d "$dest_dir" ;;
-        *.tar.gz) tar xzf "$tmp_file" -C "$dest_dir" ;;
-    esac
-    rm -f "$tmp_file"
-    echo "[native_net] OK: $name -> $dest_dir"
 }
 
-# Clean old prebuilt
-rm -rf "$PREBUILT_DIR"
-mkdir -p "$PREBUILT_DIR"
+echo "[native_net] Downloading prebuilt binaries ($TAG) from $REPO ..."
+echo ""
 
-# Download each platform
-download_asset "native_net-windows-x64.zip"       "$PREBUILT_DIR/windows/x64"   || true
-download_asset "native_net-linux-x64.tar.gz"       "$PREBUILT_DIR/linux/x64"     || true
-download_asset "native_net-macos-universal.tar.gz"  "$PREBUILT_DIR/macos"         || true
-download_asset "native_net-ios-arm64.tar.gz"        "$PREBUILT_DIR/ios"           || true
-download_asset "native_net-android-all.tar.gz"      "$PREBUILT_DIR/android"       || true
+PREBUILT="$PLUGIN_DIR/prebuilt"
+mkdir -p "$PREBUILT"
+
+# Android AAR (all ABIs in one file)
+download "native_net.aar" "$PLUGIN_DIR/android/libs/native_net.aar" || true
+
+# iOS XCFramework
+if download "native_net-xcframework.tar.gz" "/tmp/nn_xcfw_$$.tar.gz"; then
+    rm -rf "$PLUGIN_DIR/ios/Frameworks/native_net.xcframework"
+    mkdir -p "$PLUGIN_DIR/ios/Frameworks"
+    tar xzf "/tmp/nn_xcfw_$$.tar.gz" -C "$PLUGIN_DIR/ios/Frameworks/"
+    rm -f "/tmp/nn_xcfw_$$.tar.gz"
+    echo "[native_net]   -> ios/Frameworks/native_net.xcframework/"
+fi
+
+# macOS XCFramework (same archive, extract for macOS too)
+if download "native_net-xcframework.tar.gz" "/tmp/nn_xcfw_mac_$$.tar.gz"; then
+    rm -rf "$PLUGIN_DIR/macos/Frameworks/native_net.xcframework"
+    mkdir -p "$PLUGIN_DIR/macos/Frameworks"
+    tar xzf "/tmp/nn_xcfw_mac_$$.tar.gz" -C "$PLUGIN_DIR/macos/Frameworks/"
+    rm -f "/tmp/nn_xcfw_mac_$$.tar.gz"
+    echo "[native_net]   -> macos/Frameworks/native_net.xcframework/"
+fi
+
+# Windows DLL
+download "native_net-windows-x64.zip" "/tmp/nn_win_$$.zip" && {
+    mkdir -p "$PREBUILT/windows/x64"
+    unzip -qo "/tmp/nn_win_$$.zip" -d "$PREBUILT/windows/x64/"
+    rm -f "/tmp/nn_win_$$.zip"
+} || true
+
+# Linux SO
+download "native_net-linux-x64.tar.gz" "/tmp/nn_linux_$$.tar.gz" && {
+    mkdir -p "$PREBUILT/linux/x64"
+    tar xzf "/tmp/nn_linux_$$.tar.gz" -C "$PREBUILT/linux/x64/"
+    rm -f "/tmp/nn_linux_$$.tar.gz"
+} || true
 
 echo ""
-echo "[native_net] Prebuilt binaries downloaded to: $PREBUILT_DIR"
-echo "[native_net] Directory structure:"
-find "$PREBUILT_DIR" -type f 2>/dev/null | sort | sed 's|^|  |'
+echo "[native_net] Done. Files:"
+find "$PLUGIN_DIR/android/libs" "$PLUGIN_DIR/ios/Frameworks" \
+     "$PLUGIN_DIR/macos/Frameworks" "$PREBUILT" \
+     -type f 2>/dev/null | sort | sed "s|$PLUGIN_DIR/|  |"
 echo ""
 echo "[native_net] Run 'flutter clean && flutter run' to use them."
