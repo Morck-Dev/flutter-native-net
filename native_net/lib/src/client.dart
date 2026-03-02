@@ -1,12 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ffi';
 import 'dart:typed_data';
 
-import 'package:ffi/ffi.dart';
-
 import '../native_net_platform_interface.dart';
-import 'ffi/bindings.dart' show NativeNetProgressStruct;
 import 'models/config.dart';
 import 'models/exceptions.dart';
 import 'models/http_method.dart';
@@ -26,24 +22,6 @@ typedef ResponseInterceptor = Future<NativeNetResponse> Function(
 
 /// The main HTTP client powered by libcurl on native platforms
 /// and the Fetch API on web.
-///
-/// - **Android / iOS / macOS / Linux / Windows**: libcurl via dart:ffi
-/// - **Web**: browser Fetch API
-///
-/// Usage:
-/// ```dart
-/// final client = NativeNetClient(
-///   config: NativeNetConfig(
-///     connectTimeout: Duration(seconds: 10),
-///     defaultHeaders: {'Authorization': 'Bearer token'},
-///   ),
-/// );
-///
-/// final response = await client.get('https://api.example.com/data');
-/// print(response.body);
-///
-/// client.close();
-/// ```
 class NativeNetClient {
   final NativeNetConfig _config;
   final List<RequestInterceptor> _requestInterceptors = [];
@@ -64,7 +42,6 @@ class NativeNetClient {
     _responseInterceptors.add(interceptor);
   }
 
-  /// Ensures the native client is initialised.
   Future<void> _ensureInitialized() async {
     if (_closed) {
       throw const NativeNetException(
@@ -84,20 +61,14 @@ class NativeNetClient {
   }
 
   /// Sends an HTTP request and returns the response.
-  ///
-  /// This is the core method that all convenience methods delegate to.
-  /// It handles request/response interceptors, default headers, and
-  /// error mapping.
   Future<NativeNetResponse> request(NativeNetRequest request) async {
     await _ensureInitialized();
 
-    // Apply request interceptors
     var processedRequest = request;
     for (final interceptor in _requestInterceptors) {
       processedRequest = await interceptor(processedRequest);
     }
 
-    // Merge default headers with request headers
     final mergedHeaders = <String, String>{};
     if (_config.defaultHeaders != null) {
       mergedHeaders.addAll(_config.defaultHeaders!);
@@ -106,13 +77,11 @@ class NativeNetClient {
       mergedHeaders.addAll(processedRequest.headers!);
     }
 
-    // Build the final request map
     final requestMap = processedRequest.toMap();
     if (mergedHeaders.isNotEmpty) {
       requestMap['headers'] = mergedHeaders;
     }
 
-    // Inject all client-level config options
     _applyConfigToMap(requestMap);
 
     // Handle multipart body building in Dart
@@ -134,7 +103,6 @@ class NativeNetClient {
       final resultMap = await NativeNetPlatform.instance.request(requestMap);
       var response = NativeNetResponse.fromMap(resultMap);
 
-      // Apply response interceptors
       for (final interceptor in _responseInterceptors) {
         response = await interceptor(response);
       }
@@ -150,9 +118,8 @@ class NativeNetClient {
     }
   }
 
-  // ─── Convenience methods ──────────────────────────────────────────────────
+  // ── Convenience methods ──────────────────────────────────────────────────
 
-  /// Sends a GET request.
   Future<NativeNetResponse> get(
     String url, {
     Map<String, String>? headers,
@@ -168,7 +135,6 @@ class NativeNetClient {
     ));
   }
 
-  /// Sends a POST request with an optional body.
   Future<NativeNetResponse> post(
     String url, {
     Map<String, String>? headers,
@@ -190,7 +156,6 @@ class NativeNetClient {
     ));
   }
 
-  /// Sends a POST request with a JSON body.
   Future<NativeNetResponse> postJson(
     String url, {
     Map<String, String>? headers,
@@ -214,7 +179,6 @@ class NativeNetClient {
     ));
   }
 
-  /// Sends a PUT request with an optional body.
   Future<NativeNetResponse> put(
     String url, {
     Map<String, String>? headers,
@@ -236,7 +200,6 @@ class NativeNetClient {
     ));
   }
 
-  /// Sends a PUT request with a JSON body.
   Future<NativeNetResponse> putJson(
     String url, {
     Map<String, String>? headers,
@@ -260,7 +223,6 @@ class NativeNetClient {
     ));
   }
 
-  /// Sends a DELETE request.
   Future<NativeNetResponse> delete(
     String url, {
     Map<String, String>? headers,
@@ -278,7 +240,6 @@ class NativeNetClient {
     ));
   }
 
-  /// Sends a PATCH request with an optional body.
   Future<NativeNetResponse> patch(
     String url, {
     Map<String, String>? headers,
@@ -300,7 +261,6 @@ class NativeNetClient {
     ));
   }
 
-  /// Sends a PATCH request with a JSON body.
   Future<NativeNetResponse> patchJson(
     String url, {
     Map<String, String>? headers,
@@ -324,7 +284,6 @@ class NativeNetClient {
     ));
   }
 
-  /// Sends a HEAD request.
   Future<NativeNetResponse> head(
     String url, {
     Map<String, String>? headers,
@@ -340,7 +299,6 @@ class NativeNetClient {
     ));
   }
 
-  /// Sends a multipart/form-data request (e.g. for file uploads).
   Future<NativeNetResponse> multipart(
     String url, {
     HttpMethod method = HttpMethod.post,
@@ -363,34 +321,13 @@ class NativeNetClient {
     ));
   }
 
-  // ─── File download ──────────────────────────────────────────────────────
+  // ── File download ────────────────────────────────────────────────────────
 
   /// Downloads a URL directly to a local file.
   ///
-  /// The file is written to [savePath]. The download is streamed directly
-  /// to disk so arbitrarily large files can be downloaded without using
-  /// excessive memory.
-  ///
-  /// [onProgress] is called periodically with the number of bytes received
-  /// and the total expected size (0 if the server doesn't send
-  /// Content-Length).
-  ///
-  /// Pass a [CancelToken] to cancel the download mid-flight.
-  ///
-  /// Returns a [NativeNetResponse] with headers, status code, and timing
-  /// information. The response body will be empty (the data is on disk).
-  ///
-  /// ```dart
-  /// final token = CancelToken();
-  /// final response = await client.downloadFile(
-  ///   'https://example.com/large.zip',
-  ///   '/tmp/large.zip',
-  ///   onProgress: (received, total) {
-  ///     print('${(received / total * 100).toStringAsFixed(1)}%');
-  ///   },
-  ///   cancelToken: token,
-  /// );
-  /// ```
+  /// Streams directly to disk so arbitrarily large files can be downloaded
+  /// without using excessive memory. Progress reporting and cancellation
+  /// are handled by the native platform layer.
   Future<NativeNetResponse> downloadFile(
     String url,
     String savePath, {
@@ -402,96 +339,33 @@ class NativeNetClient {
   }) async {
     await _ensureInitialized();
 
-    // Merge headers
     final mergedHeaders = <String, String>{};
     if (_config.defaultHeaders != null) {
       mergedHeaders.addAll(_config.defaultHeaders!);
     }
     if (headers != null) mergedHeaders.addAll(headers);
 
-    // Allocate progress struct in shared native memory
-    final progressPtr = calloc<NativeNetProgressStruct>();
-    final progressAddr = progressPtr.address;
+    final data = <String, dynamic>{
+      'url': url,
+      'filePath': savePath,
+      'headers': mergedHeaders.isNotEmpty ? mergedHeaders : null,
+      if (connectTimeout != null)
+        'connectTimeout': connectTimeout.inMilliseconds,
+      if (readTimeout != null) 'readTimeout': readTimeout.inMilliseconds,
+    };
+    _applyConfigToMap(data);
 
-    // Wire up cancel token
-    cancelToken?.progressAddress = progressAddr;
-
-    // Start a timer that polls the progress struct and calls the callback
-    Timer? progressTimer;
-    if (onProgress != null) {
-      progressTimer = Timer.periodic(
-        const Duration(milliseconds: 100),
-        (_) {
-          final dl = progressPtr.ref.downloadNow;
-          final total = progressPtr.ref.downloadTotal;
-          onProgress(dl, total);
-        },
-      );
-    }
-
-    // Check cancel token periodically
-    Timer? cancelTimer;
-    if (cancelToken != null) {
-      cancelTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
-        if (cancelToken.isCancelled) {
-          progressPtr.ref.cancelled = 1;
-        }
-      });
-    }
-
-    try {
-      final data = <String, dynamic>{
-        'url': url,
-        'filePath': savePath,
-        'headers': mergedHeaders.isNotEmpty ? mergedHeaders : null,
-        if (connectTimeout != null)
-          'connectTimeout': connectTimeout.inMilliseconds,
-        if (readTimeout != null)
-          'readTimeout': readTimeout.inMilliseconds,
-        '_progressAddr': progressAddr,
-      };
-      _applyConfigToMap(data);
-
-      final resultMap = await NativeNetPlatform.instance.downloadFile(data);
-
-      if (onProgress != null) {
-        onProgress(progressPtr.ref.downloadNow, progressPtr.ref.downloadTotal);
-      }
-
-      return NativeNetResponse.fromMap(resultMap);
-    } finally {
-      progressTimer?.cancel();
-      cancelTimer?.cancel();
-      calloc.free(progressPtr);
-    }
+    final resultMap = await NativeNetPlatform.instance.downloadFile(data);
+    return NativeNetResponse.fromMap(resultMap);
   }
 
-  // ─── File upload ───────────────────────────────────────────────────────
+  // ── File upload ──────────────────────────────────────────────────────────
 
   /// Uploads a local file to a URL as multipart/form-data.
   ///
   /// The file is streamed directly from disk using libcurl's mime API,
   /// so arbitrarily large files can be uploaded without loading them
   /// entirely into memory.
-  ///
-  /// [filePath] is the local path to the file to upload.
-  /// [fieldName] is the form field name (default "file").
-  /// [fileName] is the filename sent in the Content-Disposition header.
-  /// [contentType] is the MIME type (e.g. "image/jpeg").
-  /// [formFields] are additional form data key-value pairs.
-  ///
-  /// ```dart
-  /// final response = await client.uploadFile(
-  ///   'https://example.com/upload',
-  ///   '/tmp/photo.jpg',
-  ///   fieldName: 'photo',
-  ///   contentType: 'image/jpeg',
-  ///   formFields: {'album': 'vacation'},
-  ///   onProgress: (sent, total) {
-  ///     print('${(sent / total * 100).toStringAsFixed(1)}%');
-  ///   },
-  /// );
-  /// ```
   Future<NativeNetResponse> uploadFile(
     String url,
     String filePath, {
@@ -507,40 +381,12 @@ class NativeNetClient {
   }) async {
     await _ensureInitialized();
 
-    // Merge headers
     final mergedHeaders = <String, String>{};
     if (_config.defaultHeaders != null) {
       mergedHeaders.addAll(_config.defaultHeaders!);
     }
     if (headers != null) mergedHeaders.addAll(headers);
 
-    // Allocate progress struct
-    final progressPtr = calloc<NativeNetProgressStruct>();
-    final progressAddr = progressPtr.address;
-    cancelToken?.progressAddress = progressAddr;
-
-    Timer? progressTimer;
-    if (onProgress != null) {
-      progressTimer = Timer.periodic(
-        const Duration(milliseconds: 100),
-        (_) {
-          final ul = progressPtr.ref.uploadNow;
-          final total = progressPtr.ref.uploadTotal;
-          onProgress(ul, total);
-        },
-      );
-    }
-
-    Timer? cancelTimer;
-    if (cancelToken != null) {
-      cancelTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
-        if (cancelToken.isCancelled) {
-          progressPtr.ref.cancelled = 1;
-        }
-      });
-    }
-
-    // Encode extra form fields as "key=value\nkey=value\n"
     String? extraFieldsStr;
     if (formFields != null && formFields.isNotEmpty) {
       final buf = StringBuffer();
@@ -548,52 +394,34 @@ class NativeNetClient {
       extraFieldsStr = buf.toString();
     }
 
-    try {
-      final data = <String, dynamic>{
-        'url': url,
-        'method': 'POST',
-        'headers': mergedHeaders.isNotEmpty ? mergedHeaders : null,
-        'filePath': filePath,
-        'fileField': fieldName,
-        'fileName': fileName,
-        'mimeType': contentType,
-        'extraFields': extraFieldsStr,
-        if (connectTimeout != null)
-          'connectTimeout': connectTimeout.inMilliseconds,
-        if (readTimeout != null)
-          'readTimeout': readTimeout.inMilliseconds,
-        '_progressAddr': progressAddr,
-      };
-      _applyConfigToMap(data);
+    final data = <String, dynamic>{
+      'url': url,
+      'method': 'POST',
+      'headers': mergedHeaders.isNotEmpty ? mergedHeaders : null,
+      'filePath': filePath,
+      'fileField': fieldName,
+      'fileName': fileName,
+      'mimeType': contentType,
+      'extraFields': extraFieldsStr,
+      if (connectTimeout != null)
+        'connectTimeout': connectTimeout.inMilliseconds,
+      if (readTimeout != null) 'readTimeout': readTimeout.inMilliseconds,
+    };
+    _applyConfigToMap(data);
 
-      final resultMap = await NativeNetPlatform.instance.uploadFile(data);
-
-      if (onProgress != null) {
-        onProgress(progressPtr.ref.uploadNow, progressPtr.ref.uploadTotal);
-      }
-
-      return NativeNetResponse.fromMap(resultMap);
-    } finally {
-      progressTimer?.cancel();
-      cancelTimer?.cancel();
-      calloc.free(progressPtr);
-    }
+    final resultMap = await NativeNetPlatform.instance.uploadFile(data);
+    return NativeNetResponse.fromMap(resultMap);
   }
 
-  // ─── Config injection ────────────────────────────────────────────────────
+  // ── Config injection ───────────────────────────────────────────────────
 
-  /// Injects all client-level config options into a request data map.
   void _applyConfigToMap(Map<String, dynamic> map) {
-    // Verbose
     map['verbose'] = _config.enableLogging;
-
-    // Timeouts (only if not already set per-request)
     map['connectTimeout'] ??= _config.connectTimeout.inMilliseconds;
     map['readTimeout'] ??= _config.readTimeout.inMilliseconds;
     map['followRedirects'] ??= _config.followRedirects;
     map['maxRedirects'] ??= _config.maxRedirects;
 
-    // TLS
     final tls = _config.tls;
     if (tls != null) {
       map['sslVerifyPeer'] = tls.verifyPeer ? 1 : -1;
@@ -602,13 +430,14 @@ class NativeNetClient {
       if (tls.caDirectoryPath != null) map['caPath'] = tls.caDirectoryPath;
       if (tls.clientCertPath != null) map['clientCert'] = tls.clientCertPath;
       if (tls.clientKeyPath != null) map['clientKey'] = tls.clientKeyPath;
-      if (tls.clientCertType != null) map['clientCertType'] = tls.clientCertType;
+      if (tls.clientCertType != null) {
+        map['clientCertType'] = tls.clientCertType;
+      }
       if (tls.pinnedPublicKey != null) {
         map['pinnedPublicKey'] = tls.pinnedPublicKey;
       }
     }
 
-    // Proxy
     final proxy = _config.proxy;
     if (proxy != null) {
       map['proxy'] = proxy.url;
@@ -619,7 +448,6 @@ class NativeNetClient {
       }
     }
 
-    // Cookies
     final cookies = _config.cookies;
     if (cookies != null) {
       if (cookies.cookies != null) map['cookie'] = cookies.cookies;
@@ -627,28 +455,17 @@ class NativeNetClient {
       if (cookies.cookieJar != null) map['cookieJar'] = cookies.cookieJar;
     }
 
-    // HTTP version
     if (_config.httpVersion.value > 0) {
       map['httpVersion'] = _config.httpVersion.value;
     }
-
-    // Speed limits
     if (_config.maxDownloadSpeed > 0) {
       map['maxRecvSpeed'] = _config.maxDownloadSpeed;
     }
     if (_config.maxUploadSpeed > 0) {
       map['maxSendSpeed'] = _config.maxUploadSpeed;
     }
-
-    // User-Agent
-    if (_config.userAgent != null) {
-      map['userAgent'] = _config.userAgent;
-    }
-
-    // DNS
-    if (_config.dnsServers != null) {
-      map['dnsServers'] = _config.dnsServers;
-    }
+    if (_config.userAgent != null) map['userAgent'] = _config.userAgent;
+    if (_config.dnsServers != null) map['dnsServers'] = _config.dnsServers;
   }
 
   /// Closes the client and releases native resources.
@@ -661,7 +478,7 @@ class NativeNetClient {
     }
   }
 
-  // ─── Multipart body builder ────────────────────────────────────────────
+  // ── Multipart body builder ─────────────────────────────────────────────
 
   _MultipartResult _buildMultipartBody(
     Map<String, String>? formFields,
@@ -671,7 +488,6 @@ class NativeNetClient {
     final buffer = BytesBuilder();
     const crlf = '\r\n';
 
-    // Form fields
     formFields?.forEach((key, value) {
       buffer.add('--$boundary$crlf'.codeUnits);
       buffer.add(
@@ -680,7 +496,6 @@ class NativeNetClient {
       buffer.add('$value$crlf'.codeUnits);
     });
 
-    // Files
     for (final file in files) {
       buffer.add('--$boundary$crlf'.codeUnits);
       buffer.add(
