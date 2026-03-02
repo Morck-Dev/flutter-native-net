@@ -18,8 +18,6 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-        // For local AAR files
-        flatDir { dirs("libs") }
     }
 }
 
@@ -28,9 +26,10 @@ plugins {
     id("kotlin-android")
 }
 
-// Check if prebuilt AAR exists
-val prebuiltAar = file("libs/native_net.aar")
-val usePrebuiltAar = prebuiltAar.exists()
+// Prebuilt .so files go in src/main/jniLibs/{abi}/libnative_net.so
+// Gradle bundles them into the APK automatically.
+val jniLibsDir = file("src/main/jniLibs")
+val hasPrebuilt = file("src/main/jniLibs/arm64-v8a/libnative_net.so").exists()
 
 android {
     namespace = "com.example.native_net"
@@ -48,6 +47,7 @@ android {
     sourceSets {
         getByName("main") {
             java.srcDirs("src/main/kotlin")
+            // jniLibs is automatically picked up from src/main/jniLibs/
         }
         getByName("test") {
             java.srcDirs("src/test/kotlin")
@@ -57,8 +57,7 @@ android {
     defaultConfig {
         minSdk = 21
 
-        if (!usePrebuiltAar) {
-            // Build from source via CMake (fallback when no prebuilt AAR)
+        if (!hasPrebuilt) {
             externalNativeBuild {
                 cmake {
                     arguments("-DANDROID_STL=c++_shared")
@@ -71,7 +70,7 @@ android {
         }
     }
 
-    if (!usePrebuiltAar) {
+    if (!hasPrebuilt) {
         externalNativeBuild {
             cmake {
                 path = file("../src/CMakeLists.txt")
@@ -95,16 +94,13 @@ android {
 }
 
 dependencies {
-    if (usePrebuiltAar) {
-        // Use prebuilt AAR (contains .so for all ABIs)
-        implementation(files("libs/native_net.aar"))
-    }
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
 }
 
-if (usePrebuiltAar) {
-    logger.lifecycle("[native_net] Using prebuilt AAR: ${prebuiltAar.absolutePath}")
+if (hasPrebuilt) {
+    logger.lifecycle("[native_net] Using prebuilt .so from: ${jniLibsDir.absolutePath}")
 } else {
-    logger.lifecycle("[native_net] No prebuilt AAR found, will build from source via CMake")
+    logger.lifecycle("[native_net] No prebuilt .so found, building from source via CMake")
+    logger.lifecycle("[native_net] (Run 'bash scripts/download_prebuilt.sh' for prebuilt binaries)")
 }

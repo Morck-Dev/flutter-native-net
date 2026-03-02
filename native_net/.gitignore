@@ -34,5 +34,6 @@ migrate_working_dir/
 # Prebuilt binaries (downloaded via scripts/download_prebuilt.sh)
 ios/Frameworks/
 macos/Frameworks/
+android/src/main/jniLibs/
 android/libs/
 prebuilt/
