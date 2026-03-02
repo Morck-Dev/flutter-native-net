@@ -1,0 +1,74 @@
+name: Create Release Tag
+
+# Manually trigger to create a new version tag, which then triggers build-native.yml
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g. 0.4.0). Will create tag v0.4.0'
+        required: true
+        type: string
+      curl_version:
+        description: 'curl version to use (leave empty to keep current)'
+        required: false
+        type: string
+      mbedtls_version:
+        description: 'mbedTLS version to use (leave empty to keep current)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  create-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update version numbers if provided
+        run: |
+          TAG="v${{ inputs.version }}"
+          echo "Creating release $TAG"
+
+          # Update curl version in CMakeLists.txt if provided
+          if [ -n "${{ inputs.curl_version }}" ]; then
+            CURL_VER="${{ inputs.curl_version }}"
+            echo "Updating curl to $CURL_VER"
+            # Update the FetchContent URL in CMakeLists.txt
+            CURL_TAG=$(echo "$CURL_VER" | tr '.' '_')
+            sed -i "s|curl/releases/download/curl-[0-9_]*/curl-[0-9.]*.tar.gz|curl/releases/download/curl-${CURL_TAG}/curl-${CURL_VER}.tar.gz|g" native_net/src/CMakeLists.txt
+            # Update the env var in build-native.yml
+            sed -i "s/CURL_VERSION: .*/CURL_VERSION: \"${CURL_VER}\"/" .github/workflows/build-native.yml
+            # Update the iOS/macOS build scripts
+            sed -i "s/CURL_VERSION=.*/CURL_VERSION=\"${CURL_VER}\"/" native_net/scripts/build_curl_ios.sh
+            sed -i "s/CURL_VERSION=.*/CURL_VERSION=\"${CURL_VER}\"/" native_net/scripts/build_curl_macos.sh
+          fi
+
+          # Update mbedTLS version if provided
+          if [ -n "${{ inputs.mbedtls_version }}" ]; then
+            MBED_VER="${{ inputs.mbedtls_version }}"
+            echo "Updating mbedTLS to $MBED_VER"
+            sed -i "s|mbedtls/releases/download/mbedtls-[0-9.]*/mbedtls-[0-9.]*.tar.bz2|mbedtls/releases/download/mbedtls-${MBED_VER}/mbedtls-${MBED_VER}.tar.bz2|g" native_net/src/CMakeLists.txt
+            sed -i "s/MBEDTLS_VERSION: .*/MBEDTLS_VERSION: \"${MBED_VER}\"/" .github/workflows/build-native.yml
+          fi
+
+          # Update AAR download URL in build.gradle
+          sed -i "s|/releases/download/v[0-9.]*/native_net.aar|/releases/download/${TAG}/native_net.aar|g" native_net/android/build.gradle
+
+          # Update pubspec version
+          sed -i "s/^version: .*/version: ${{ inputs.version }}/" native_net/pubspec.yaml
+
+      - name: Commit and tag
+        run: |
+          TAG="v${{ inputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --staged --quiet || git commit -m "chore: bump version to $TAG"
+          git tag -f "$TAG"
+          git push origin HEAD
+          git push origin "$TAG" --force
+          echo "Tag $TAG created. build-native.yml will now trigger automatically."
