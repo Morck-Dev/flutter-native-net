@@ -84,14 +84,31 @@ def urlImplementation = { url, name ->
                 rename { file.name }
             }
         } else {
-            // Download from GitHub Releases
+            // Try to download from GitHub Releases
             logger.lifecycle("[native_net] Downloading AAR from: $url")
-            new URL(url).withInputStream { downloadStream ->
-                file.withOutputStream { fileOut ->
-                    fileOut << downloadStream
+            try {
+                new URL(url).withInputStream { downloadStream ->
+                    file.withOutputStream { fileOut ->
+                        fileOut << downloadStream
+                    }
                 }
+                logger.lifecycle("[native_net] AAR downloaded successfully.")
+            } catch (Exception e) {
+                logger.error("")
+                logger.error("=" * 70)
+                logger.error("[native_net] FAILED to download AAR: ${e.message}")
+                logger.error("")
+                logger.error("  Fix: manually download the AAR and place it at:")
+                logger.error("    ${localAar.absolutePath}")
+                logger.error("")
+                logger.error("  Download URL:")
+                logger.error("    $url")
+                logger.error("=" * 70)
+                logger.error("")
+                throw new GradleException(
+                    "[native_net] Cannot download AAR. " +
+                    "Place native_net.aar at: ${localAar.absolutePath}")
             }
-            logger.lifecycle("[native_net] AAR downloaded successfully.")
         }
     } else {
         logger.lifecycle("[native_net] Using cached AAR: ${file.absolutePath}")
