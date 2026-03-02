@@ -189,6 +189,37 @@ class NativeNetClient {
     ));
   }
 
+  /// Sends a POST request with form data (application/x-www-form-urlencoded).
+  ///
+  /// ```dart
+  /// final response = await client.postForm(
+  ///   'https://api.example.com/login',
+  ///   formData: {'username': 'test', 'password': '123456'},
+  /// );
+  /// ```
+  Future<NativeNetResponse> postForm(
+    String url, {
+    Map<String, String>? headers,
+    required Map<String, String> formData,
+    Duration? connectTimeout,
+    Duration? readTimeout,
+    Duration? writeTimeout,
+  }) {
+    final mergedHeaders = <String, String>{
+      'Content-Type': 'application/x-www-form-urlencoded',
+      ...?headers,
+    };
+    return request(NativeNetRequest(
+      url: url,
+      method: HttpMethod.post,
+      headers: mergedHeaders,
+      body: _encodeFormData(formData),
+      connectTimeout: connectTimeout,
+      readTimeout: readTimeout,
+      writeTimeout: writeTimeout,
+    ));
+  }
+
   Future<NativeNetResponse> put(
     String url, {
     Map<String, String>? headers,
@@ -227,6 +258,30 @@ class NativeNetClient {
       method: HttpMethod.put,
       headers: mergedHeaders,
       body: json.encode(jsonBody),
+      connectTimeout: connectTimeout,
+      readTimeout: readTimeout,
+      writeTimeout: writeTimeout,
+    ));
+  }
+
+  /// Sends a PUT request with form data (application/x-www-form-urlencoded).
+  Future<NativeNetResponse> putForm(
+    String url, {
+    Map<String, String>? headers,
+    required Map<String, String> formData,
+    Duration? connectTimeout,
+    Duration? readTimeout,
+    Duration? writeTimeout,
+  }) {
+    final mergedHeaders = <String, String>{
+      'Content-Type': 'application/x-www-form-urlencoded',
+      ...?headers,
+    };
+    return request(NativeNetRequest(
+      url: url,
+      method: HttpMethod.put,
+      headers: mergedHeaders,
+      body: _encodeFormData(formData),
       connectTimeout: connectTimeout,
       readTimeout: readTimeout,
       writeTimeout: writeTimeout,
@@ -288,6 +343,30 @@ class NativeNetClient {
       method: HttpMethod.patch,
       headers: mergedHeaders,
       body: json.encode(jsonBody),
+      connectTimeout: connectTimeout,
+      readTimeout: readTimeout,
+      writeTimeout: writeTimeout,
+    ));
+  }
+
+  /// Sends a PATCH request with form data (application/x-www-form-urlencoded).
+  Future<NativeNetResponse> patchForm(
+    String url, {
+    Map<String, String>? headers,
+    required Map<String, String> formData,
+    Duration? connectTimeout,
+    Duration? readTimeout,
+    Duration? writeTimeout,
+  }) {
+    final mergedHeaders = <String, String>{
+      'Content-Type': 'application/x-www-form-urlencoded',
+      ...?headers,
+    };
+    return request(NativeNetRequest(
+      url: url,
+      method: HttpMethod.patch,
+      headers: mergedHeaders,
+      body: _encodeFormData(formData),
       connectTimeout: connectTimeout,
       readTimeout: readTimeout,
       writeTimeout: writeTimeout,
@@ -514,6 +593,15 @@ class NativeNetClient {
         await NativeNetPlatform.instance.dispose();
       }
     }
+  }
+
+  // ── Form data encoder ─────────────────────────────────────────────────
+
+  static String _encodeFormData(Map<String, String> data) {
+    return data.entries
+        .map((e) =>
+            '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}')
+        .join('&');
   }
 
   // ── Multipart body builder ─────────────────────────────────────────────
