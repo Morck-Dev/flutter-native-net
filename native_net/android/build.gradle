@@ -1,0 +1,108 @@
+group 'com.example.native_net'
+version '1.0'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.1.0'
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        maven {
+            url "${rootProject.buildDir}/native_net/aar_maven"
+        }
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace "com.example.native_net"
+
+    compileSdk 34
+
+    defaultConfig {
+        minSdkVersion 21
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs = ['src/main/kotlin']
+        }
+    }
+
+    lint {
+        disable 'InvalidPackage'
+    }
+}
+
+// ============================================================================
+// AAR download mechanism (same approach as flutter_curl)
+//
+// 1. On first build, downloads the prebuilt AAR from GitHub Releases
+// 2. Places it in a local Maven repo structure
+// 3. Subsequent builds use the cached AAR (no re-download)
+//
+// If you have the AAR locally, place it at:
+//   android/native_net.aar
+// and it will be used instead of downloading.
+// ============================================================================
+
+def aarUrl = "https://github.com/Morck-Dev/flutter-native-net/releases/download/v0.3.1/native_net.aar"
+
+def urlImplementation = { url, name ->
+    File file = new File("$buildDir/$name")
+    file.parentFile.mkdirs()
+
+    if (!file.exists()) {
+        // Copy the local Maven POM to the build directory
+        copy {
+            from "$projectDir/maven"
+            into "$buildDir/aar_maven"
+        }
+
+        // Check for a locally placed AAR first
+        File localAar = new File("$projectDir/native_net.aar")
+        if (localAar.exists()) {
+            logger.lifecycle("[native_net] Using local AAR: ${localAar.absolutePath}")
+            copy {
+                from localAar
+                into file.parentFile
+                rename { file.name }
+            }
+        } else {
+            // Download from GitHub Releases
+            logger.lifecycle("[native_net] Downloading AAR from: $url")
+            new URL(url).withInputStream { downloadStream ->
+                file.withOutputStream { fileOut ->
+                    fileOut << downloadStream
+                }
+            }
+            logger.lifecycle("[native_net] AAR downloaded successfully.")
+        }
+    } else {
+        logger.lifecycle("[native_net] Using cached AAR: ${file.absolutePath}")
+    }
+
+    'com.example:native_net:0.0.1'
+}
+
+dependencies {
+    implementation urlImplementation(
+        aarUrl,
+        "aar_maven/com/example/native_net/0.0.1/native_net-0.0.1.aar"
+    )
+}
