@@ -9,7 +9,7 @@ Pod::Spec.new do |s|
 A Flutter FFI plugin that wraps libcurl for HTTP networking on iOS.
 Uses prebuilt XCFramework or builds libcurl from source with Secure Transport.
                        DESC
-  s.homepage         = 'https://github.com/example/flutter-native-net'
+  s.homepage         = 'https://github.com/Morck-Dev/flutter-native-net'
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'Example' => 'example@example.com' }
   s.source           = { :path => '.' }

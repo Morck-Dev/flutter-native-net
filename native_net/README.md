@@ -105,7 +105,7 @@ libcurl **始终从源码编译**，不依赖宿主系统是否预装 libcurl，
 dependencies:
   native_net:
     git:
-      url: https://github.com/example/flutter-native-net.git
+      url: https://github.com/Morck-Dev/flutter-native-net.git
       path: native_net
 ```
 
