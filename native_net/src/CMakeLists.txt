@@ -156,9 +156,9 @@ set(_NN_SKIP_EXPORT FALSE)
 
 # --- native_net library ----------------------------------------------------
 
-# iOS requires static libraries for third-party code (no dynamic loading).
-# All other platforms use shared libraries loaded via dart:ffi.
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+# Apple platforms: build STATIC (.a) — CocoaPods links it into the app.
+# Other platforms: build SHARED (.so/.dll) — loaded via DynamicLibrary.open().
+if(APPLE)
     add_library(native_net STATIC native_net_ffi.c)
 else()
     add_library(native_net SHARED native_net_ffi.c)

@@ -138,20 +138,17 @@ jobs:
             -DNATIVE_NET_FORCE_BUILD=ON
           cmake --build build-macos-x64 --config Release --parallel
 
-      - name: Create macOS universal binary
+      - name: Create macOS universal static library
         run: |
-          # Strip debug symbols
-          strip -x build-macos-arm64/libnative_net.dylib
-          strip -x build-macos-x64/libnative_net.dylib
-
+          # CMake now builds STATIC (.a) for Apple platforms
           mkdir -p universal-macos
           lipo -create \
-            build-macos-arm64/libnative_net.dylib \
-            build-macos-x64/libnative_net.dylib \
-            -output universal-macos/libnative_net.dylib
+            build-macos-arm64/libnative_net.a \
+            build-macos-x64/libnative_net.a \
+            -output universal-macos/libnative_net.a
 
           echo "=== macOS universal size ==="
-          ls -lh universal-macos/libnative_net.dylib
+          ls -lh universal-macos/libnative_net.a
 
       - name: Build iOS arm64
         run: |
@@ -176,25 +173,21 @@ jobs:
 
       - name: Create XCFramework
         run: |
-          # Strip iOS binaries
-          strip -x build-ios-arm64/libnative_net.dylib 2>/dev/null || true
-          strip -x build-ios-sim-arm64/libnative_net.dylib 2>/dev/null || true
-
-          echo "=== Library sizes after strip ==="
-          ls -lh universal-macos/libnative_net.dylib
-          ls -lh build-ios-arm64/libnative_net.dylib 2>/dev/null || true
-          ls -lh build-ios-sim-arm64/libnative_net.dylib 2>/dev/null || true
+          echo "=== Static library sizes ==="
+          ls -lh universal-macos/libnative_net.a
+          ls -lh build-ios-arm64/libnative_net.a 2>/dev/null || true
+          ls -lh build-ios-sim-arm64/libnative_net.a 2>/dev/null || true
 
           mkdir -p headers
           cp native_net/src/native_net_ffi.h headers/
 
-          # Create XCFramework
+          # XCFramework with STATIC libraries (.a) — CocoaPods compatible
           xcodebuild -create-xcframework \
-            -library universal-macos/libnative_net.dylib \
+            -library universal-macos/libnative_net.a \
             -headers headers/ \
-            -library build-ios-arm64/libnative_net.dylib \
+            -library build-ios-arm64/libnative_net.a \
             -headers headers/ \
-            -library build-ios-sim-arm64/libnative_net.dylib \
+            -library build-ios-sim-arm64/libnative_net.a \
             -headers headers/ \
             -output native_net.xcframework
 
