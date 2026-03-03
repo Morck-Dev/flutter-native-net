@@ -175,21 +175,42 @@ jobs:
         run: |
           echo "=== Static library sizes ==="
           ls -lh universal-macos/libnative_net.a
-          ls -lh build-ios-arm64/libnative_net.a 2>/dev/null || true
-          ls -lh build-ios-sim-arm64/libnative_net.a 2>/dev/null || true
+          ls -lh build-ios-arm64/libnative_net.a
+          ls -lh build-ios-sim-arm64/libnative_net.a
 
-          mkdir -p headers
-          cp native_net/src/native_net_ffi.h headers/
+          HEADER=native_net/src/native_net_ffi.h
 
-          # XCFramework with STATIC libraries (.a) — CocoaPods compatible
+          # Wrap each .a into a proper .framework bundle
+          # (CocoaPods vendored_frameworks requires .framework, not raw .a)
+          create_framework() {
+            local name="$1" src_a="$2" dest="$3"
+            mkdir -p "$dest/$name.framework/Headers"
+            cp "$src_a" "$dest/$name.framework/$name"
+            cp "$HEADER" "$dest/$name.framework/Headers/"
+            cat > "$dest/$name.framework/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleIdentifier</key><string>com.example.native-net</string>
+            <key>CFBundleName</key><string>native_net</string>
+            <key>CFBundleVersion</key><string>1</string>
+          </dict></plist>
+          PLIST
+          }
+
+          create_framework native_net universal-macos/libnative_net.a fw-macos
+          create_framework native_net build-ios-arm64/libnative_net.a fw-ios
+          create_framework native_net build-ios-sim-arm64/libnative_net.a fw-sim
+
+          # Create XCFramework from framework bundles
           xcodebuild -create-xcframework \
-            -library universal-macos/libnative_net.a \
-            -headers headers/ \
-            -library build-ios-arm64/libnative_net.a \
-            -headers headers/ \
-            -library build-ios-sim-arm64/libnative_net.a \
-            -headers headers/ \
+            -framework fw-macos/native_net.framework \
+            -framework fw-ios/native_net.framework \
+            -framework fw-sim/native_net.framework \
             -output native_net.xcframework
+
+          echo "=== XCFramework structure ==="
+          find native_net.xcframework -type f | head -20
 
           echo "=== XCFramework structure ==="
           find native_net.xcframework -type f | head -20
