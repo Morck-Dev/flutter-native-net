@@ -128,6 +128,11 @@ jobs:
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 \
             -DNATIVE_NET_FORCE_BUILD=ON
           cmake --build build-macos-arm64 --config Release --parallel
+          # Merge all static libs into one (native_net + libcurl + mbedtls deps)
+          libtool -static -o build-macos-arm64/libnative_net_fat.a \
+            build-macos-arm64/libnative_net.a \
+            $(find build-macos-arm64/_deps -name "*.a" | tr '\n' ' ')
+          mv build-macos-arm64/libnative_net_fat.a build-macos-arm64/libnative_net.a
 
       - name: Build macOS x86_64
         run: |
@@ -137,16 +142,18 @@ jobs:
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 \
             -DNATIVE_NET_FORCE_BUILD=ON
           cmake --build build-macos-x64 --config Release --parallel
+          libtool -static -o build-macos-x64/libnative_net_fat.a \
+            build-macos-x64/libnative_net.a \
+            $(find build-macos-x64/_deps -name "*.a" | tr '\n' ' ')
+          mv build-macos-x64/libnative_net_fat.a build-macos-x64/libnative_net.a
 
       - name: Create macOS universal static library
         run: |
-          # CMake now builds STATIC (.a) for Apple platforms
           mkdir -p universal-macos
           lipo -create \
             build-macos-arm64/libnative_net.a \
             build-macos-x64/libnative_net.a \
             -output universal-macos/libnative_net.a
-
           echo "=== macOS universal size ==="
           ls -lh universal-macos/libnative_net.a
 
@@ -159,6 +166,10 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DNATIVE_NET_FORCE_BUILD=ON
           cmake --build build-ios-arm64 --config Release --parallel
+          libtool -static -o build-ios-arm64/libnative_net_fat.a \
+            build-ios-arm64/libnative_net.a \
+            $(find build-ios-arm64/_deps -name "*.a" | tr '\n' ' ')
+          mv build-ios-arm64/libnative_net_fat.a build-ios-arm64/libnative_net.a
 
       - name: Build iOS Simulator arm64
         run: |
@@ -170,6 +181,10 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DNATIVE_NET_FORCE_BUILD=ON
           cmake --build build-ios-sim-arm64 --config Release --parallel
+          libtool -static -o build-ios-sim-arm64/libnative_net_fat.a \
+            build-ios-sim-arm64/libnative_net.a \
+            $(find build-ios-sim-arm64/_deps -name "*.a" | tr '\n' ' ')
+          mv build-ios-sim-arm64/libnative_net_fat.a build-ios-sim-arm64/libnative_net.a
 
       - name: Create XCFramework
         run: |
