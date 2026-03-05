@@ -137,13 +137,20 @@ if download "native_net-windows-x64.zip" "$TMP_WIN"; then
     rm -f "$TMP_WIN"
 fi
 
-# ── Linux SO ─────────────────────────────────────────────────────────────
+# ── Linux SO (x64 + ARM64) ───────────────────────────────────────────────
 
 TMP_LINUX="/tmp/nn_linux_$$.tar.gz"
 if download "native_net-linux-x64.tar.gz" "$TMP_LINUX"; then
     mkdir -p "$PREBUILT/linux/x64"
     tar xzf "$TMP_LINUX" -C "$PREBUILT/linux/x64/"
     rm -f "$TMP_LINUX"
+fi
+
+TMP_LINUX_ARM="/tmp/nn_linux_arm_$$.tar.gz"
+if download "native_net-linux-arm64.tar.gz" "$TMP_LINUX_ARM"; then
+    mkdir -p "$PREBUILT/linux/arm64"
+    tar xzf "$TMP_LINUX_ARM" -C "$PREBUILT/linux/arm64/"
+    rm -f "$TMP_LINUX_ARM"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────────

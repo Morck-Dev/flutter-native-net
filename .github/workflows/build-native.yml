@@ -36,9 +36,9 @@ jobs:
           path: out/
 
   # =========================================================================
-  # Linux x64 -> libnative_net.so
+  # Linux x64 + ARM64
   # =========================================================================
-  build-linux:
+  build-linux-x64:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +53,33 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x64
+          path: out/
+
+  build-linux-arm64:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+      - name: Build
+        run: |
+          cmake -S native_net/src -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build --config Release --parallel
+      - name: Collect
+        run: |
+          mkdir -p out
+          cp build/libnative_net.so out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64
           path: out/
 
   # =========================================================================
@@ -265,7 +292,7 @@ jobs:
   # Package & Release
   # =========================================================================
   release:
-    needs: [build-windows, build-linux, build-android, build-apple]
+    needs: [build-windows, build-linux-x64, build-linux-arm64, build-android, build-apple]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -282,6 +309,7 @@ jobs:
           cp artifacts/apple-macos-framework/native_net-macos-framework.zip release/
           cd artifacts/windows-x64 && zip -r ../../release/native_net-windows-x64.zip . && cd ../..
           cd artifacts/linux-x64 && tar czf ../../release/native_net-linux-x64.tar.gz . && cd ../..
+          cd artifacts/linux-arm64 && tar czf ../../release/native_net-linux-arm64.tar.gz . && cd ../..
 
           echo "=== Release assets ==="
           ls -lh release/
@@ -299,8 +327,9 @@ jobs:
             | `native_net.aar` | Android | arm64-v8a + armeabi-v7a + x86_64 |
             | `native_net-xcframework.tar.gz` | iOS | arm64 device + arm64+x86_64 simulator |
             | `native_net-macos-framework.zip` | macOS | arm64 + x86_64 universal |
-            | `native_net-windows-x64.zip` | Windows | x64 DLL (Schannel) |
-            | `native_net-linux-x64.tar.gz` | Linux | x64 SO (mbedTLS) |
+            | `native_net-windows-x64.zip` | Windows x64 | DLL (Schannel) |
+            | `native_net-linux-x64.tar.gz` | Linux x64 | SO (mbedTLS) |
+            | `native_net-linux-arm64.tar.gz` | Linux ARM64 | SO (mbedTLS) |
 
             **Quick setup:**
             ```bash
