@@ -1,6 +1,6 @@
 #
-# macOS podspec - same approach as flutter_curl:
-# vendored_frameworks + prepare_command to auto-download from GitHub Releases.
+# macOS podspec (same approach as flutter_curl)
+# Uses a separate native_net.framework (not xcframework)
 #
 Pod::Spec.new do |s|
   s.name             = 'native_net'
@@ -17,21 +17,22 @@ Pod::Spec.new do |s|
   s.swift_version = '5.0'
 
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
+  s.vendored_frameworks = 'Frameworks/native_net.framework'
 
-  # Prebuilt native_net library (contains libcurl statically linked)
-  s.vendored_frameworks = 'Frameworks/native_net.xcframework'
-
-  # Auto-download from GitHub Releases if not present
   s.prepare_command = <<-CMD
-    if [ ! -d "Frameworks/native_net.xcframework" ]; then
-      url=https://github.com/Morck-Dev/flutter-native-net/releases/download/v0.4.0/native_net-xcframework.tar.gz
-      file=native_net-xcframework.tar.gz
-      echo "[native_net] Downloading XCFramework..."
+    if [ ! -d "Frameworks/native_net.framework" ]; then
+      url=https://github.com/Morck-Dev/flutter-native-net/releases/download/v0.4.0/native_net-macos-framework.zip
+      file=native_net-macos-framework.zip
+      echo "[native_net] Downloading macOS framework..."
       wget -O $file $url 2>/dev/null || curl -Lo $file $url
       mkdir -p Frameworks
-      tar xzf $file -C Frameworks/
+      unzip -o $file -d Frameworks/
+      # Rename to match vendored_frameworks
+      if [ -d "Frameworks/native_net_macos.framework" ]; then
+        mv Frameworks/native_net_macos.framework Frameworks/native_net.framework
+      fi
       rm -f $file
-      echo "[native_net] XCFramework ready."
+      echo "[native_net] macOS framework ready."
     fi
   CMD
 

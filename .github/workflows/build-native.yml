@@ -113,51 +113,18 @@ jobs:
           path: native_net.aar
 
   # =========================================================================
-  # Apple (iOS + macOS) -> native_net.xcframework
+  # Apple builds (same approach as flutter_curl)
+  # iOS: xcframework (device arm64 + simulator arm64+x86_64)
+  # macOS: separate framework (arm64+x86_64 universal)
   # =========================================================================
   build-apple:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build macOS arm64
-        run: |
-          cmake -S native_net/src -B build-macos-arm64 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 \
-            -DNATIVE_NET_FORCE_BUILD=ON
-          cmake --build build-macos-arm64 --config Release --parallel
-          # Merge all static libs into one (native_net + libcurl + mbedtls deps)
-          libtool -static -o build-macos-arm64/libnative_net_fat.a \
-            build-macos-arm64/libnative_net.a \
-            $(find build-macos-arm64/_deps -name "*.a" | tr '\n' ' ')
-          mv build-macos-arm64/libnative_net_fat.a build-macos-arm64/libnative_net.a
+      # --- Build all 4 Apple targets ---
 
-      - name: Build macOS x86_64
-        run: |
-          cmake -S native_net/src -B build-macos-x64 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 \
-            -DNATIVE_NET_FORCE_BUILD=ON
-          cmake --build build-macos-x64 --config Release --parallel
-          libtool -static -o build-macos-x64/libnative_net_fat.a \
-            build-macos-x64/libnative_net.a \
-            $(find build-macos-x64/_deps -name "*.a" | tr '\n' ' ')
-          mv build-macos-x64/libnative_net_fat.a build-macos-x64/libnative_net.a
-
-      - name: Create macOS universal static library
-        run: |
-          mkdir -p universal-macos
-          lipo -create \
-            build-macos-arm64/libnative_net.a \
-            build-macos-x64/libnative_net.a \
-            -output universal-macos/libnative_net.a
-          echo "=== macOS universal size ==="
-          ls -lh universal-macos/libnative_net.a
-
-      - name: Build iOS arm64
+      - name: Build iOS arm64 (device)
         run: |
           cmake -S native_net/src -B build-ios-arm64 \
             -DCMAKE_SYSTEM_NAME=iOS \
@@ -166,10 +133,10 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DNATIVE_NET_FORCE_BUILD=ON
           cmake --build build-ios-arm64 --config Release --parallel
-          libtool -static -o build-ios-arm64/libnative_net_fat.a \
+          libtool -static -o build-ios-arm64/combined.a \
             build-ios-arm64/libnative_net.a \
             $(find build-ios-arm64/_deps -name "*.a" | tr '\n' ' ')
-          mv build-ios-arm64/libnative_net_fat.a build-ios-arm64/libnative_net.a
+          strip -rSTx build-ios-arm64/combined.a
 
       - name: Build iOS Simulator arm64
         run: |
@@ -181,62 +148,118 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DNATIVE_NET_FORCE_BUILD=ON
           cmake --build build-ios-sim-arm64 --config Release --parallel
-          libtool -static -o build-ios-sim-arm64/libnative_net_fat.a \
+          libtool -static -o build-ios-sim-arm64/combined.a \
             build-ios-sim-arm64/libnative_net.a \
             $(find build-ios-sim-arm64/_deps -name "*.a" | tr '\n' ' ')
-          mv build-ios-sim-arm64/libnative_net_fat.a build-ios-sim-arm64/libnative_net.a
+          strip -rSTx build-ios-sim-arm64/combined.a
 
-      - name: Create XCFramework
+      - name: Build iOS Simulator x86_64
         run: |
-          echo "=== Static library sizes ==="
-          ls -lh universal-macos/libnative_net.a
-          ls -lh build-ios-arm64/libnative_net.a
-          ls -lh build-ios-sim-arm64/libnative_net.a
+          cmake -S native_net/src -B build-ios-sim-x64 \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=9.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build-ios-sim-x64 --config Release --parallel
+          libtool -static -o build-ios-sim-x64/combined.a \
+            build-ios-sim-x64/libnative_net.a \
+            $(find build-ios-sim-x64/_deps -name "*.a" | tr '\n' ' ')
+          strip -rSTx build-ios-sim-x64/combined.a
 
-          HEADER=native_net/src/native_net_ffi.h
+      - name: Build macOS (arm64 + x86_64)
+        run: |
+          for ARCH in arm64 x86_64; do
+            cmake -S native_net/src -B build-macos-$ARCH \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_OSX_ARCHITECTURES=$ARCH \
+              -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 \
+              -DNATIVE_NET_FORCE_BUILD=ON
+            cmake --build build-macos-$ARCH --config Release --parallel
+            libtool -static -o build-macos-$ARCH/combined.a \
+              build-macos-$ARCH/libnative_net.a \
+              $(find build-macos-$ARCH/_deps -name "*.a" | tr '\n' ' ')
+          done
 
-          # Wrap each .a into a proper .framework bundle
-          # (CocoaPods vendored_frameworks requires .framework, not raw .a)
-          create_framework() {
-            local name="$1" src_a="$2" dest="$3"
-            mkdir -p "$dest/$name.framework/Headers"
-            cp "$src_a" "$dest/$name.framework/$name"
-            cp "$HEADER" "$dest/$name.framework/Headers/"
-            cat > "$dest/$name.framework/Info.plist" << 'PLIST'
+      # --- Package iOS XCFramework (same as flutter_curl) ---
+
+      - name: Create iOS XCFramework
+        run: |
+          # Combine simulator arm64 + x86_64 into universal binary
+          lipo build-ios-sim-arm64/combined.a build-ios-sim-x64/combined.a \
+            -create -output build-ios-sim-universal.a
+
+          # Manually create xcframework (same as flutter_curl, NOT xcodebuild)
+          rm -rf native_net.xcframework
+          mkdir -p native_net.xcframework/ios-arm64/native_net.framework
+          mkdir -p native_net.xcframework/ios-arm64_x86_64-simulator/native_net.framework
+
+          cp build-ios-arm64/combined.a native_net.xcframework/ios-arm64/native_net.framework/native_net
+          cp build-ios-sim-universal.a native_net.xcframework/ios-arm64_x86_64-simulator/native_net.framework/native_net
+
+          # Write Info.plist (exact same format as flutter_curl)
+          cat > native_net.xcframework/Info.plist << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict>
-            <key>CFBundleIdentifier</key><string>com.example.native-net</string>
-            <key>CFBundleName</key><string>native_net</string>
-            <key>CFBundleVersion</key><string>1</string>
-          </dict></plist>
+          <plist version="1.0">
+          <dict>
+            <key>AvailableLibraries</key>
+            <array>
+              <dict>
+                <key>LibraryIdentifier</key><string>ios-arm64</string>
+                <key>LibraryPath</key><string>native_net.framework</string>
+                <key>SupportedArchitectures</key><array><string>arm64</string></array>
+                <key>SupportedPlatform</key><string>ios</string>
+              </dict>
+              <dict>
+                <key>LibraryIdentifier</key><string>ios-arm64_x86_64-simulator</string>
+                <key>LibraryPath</key><string>native_net.framework</string>
+                <key>SupportedArchitectures</key><array><string>arm64</string><string>x86_64</string></array>
+                <key>SupportedPlatform</key><string>ios</string>
+                <key>SupportedPlatformVariant</key><string>simulator</string>
+              </dict>
+            </array>
+            <key>CFBundlePackageType</key><string>XFWK</string>
+            <key>XCFrameworkFormatVersion</key><string>1.0</string>
+          </dict>
+          </plist>
           PLIST
-          }
 
-          create_framework native_net universal-macos/libnative_net.a fw-macos
-          create_framework native_net build-ios-arm64/libnative_net.a fw-ios
-          create_framework native_net build-ios-sim-arm64/libnative_net.a fw-sim
+          echo "=== iOS XCFramework ==="
+          find native_net.xcframework -type f
+          ls -lh native_net.xcframework/ios-arm64/native_net.framework/native_net
+          ls -lh native_net.xcframework/ios-arm64_x86_64-simulator/native_net.framework/native_net
 
-          # Create XCFramework from framework bundles
-          xcodebuild -create-xcframework \
-            -framework fw-macos/native_net.framework \
-            -framework fw-ios/native_net.framework \
-            -framework fw-sim/native_net.framework \
-            -output native_net.xcframework
+      # --- Package macOS framework (separate, same as flutter_curl) ---
 
-          echo "=== XCFramework structure ==="
-          find native_net.xcframework -type f | head -20
+      - name: Create macOS framework
+        run: |
+          lipo build-macos-arm64/combined.a build-macos-x86_64/combined.a \
+            -create -output macos-universal.a
 
-          echo "=== XCFramework structure ==="
-          find native_net.xcframework -type f | head -20
+          mkdir -p native_net_macos.framework
+          cp macos-universal.a native_net_macos.framework/native_net
+          strip -rSTx native_net_macos.framework/native_net
 
-          # Package
+          echo "=== macOS framework ==="
+          ls -lh native_net_macos.framework/native_net
+
+      - name: Package Apple artifacts
+        run: |
           tar czf native_net-xcframework.tar.gz native_net.xcframework/
+          zip -r native_net-macos-framework.zip native_net_macos.framework/
+          ls -lh native_net-xcframework.tar.gz native_net-macos-framework.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: apple-xcframework
+          name: apple-ios-xcframework
           path: native_net-xcframework.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apple-macos-framework
+          path: native_net-macos-framework.zip
 
   # =========================================================================
   # Package & Release
@@ -254,16 +277,10 @@ jobs:
         run: |
           mkdir -p release
 
-          # Android AAR (all ABIs in one file)
           cp artifacts/android-aar/native_net.aar release/
-
-          # Apple XCFramework (iOS + macOS in one package)
-          cp artifacts/apple-xcframework/native_net-xcframework.tar.gz release/
-
-          # Windows
+          cp artifacts/apple-ios-xcframework/native_net-xcframework.tar.gz release/
+          cp artifacts/apple-macos-framework/native_net-macos-framework.zip release/
           cd artifacts/windows-x64 && zip -r ../../release/native_net-windows-x64.zip . && cd ../..
-
-          # Linux
           cd artifacts/linux-x64 && tar czf ../../release/native_net-linux-x64.tar.gz . && cd ../..
 
           echo "=== Release assets ==="
@@ -280,7 +297,8 @@ jobs:
             | File | Platform | Contents |
             |------|----------|----------|
             | `native_net.aar` | Android | arm64-v8a + armeabi-v7a + x86_64 |
-            | `native_net-xcframework.tar.gz` | iOS + macOS | arm64 (device) + arm64 (sim) + universal macOS |
+            | `native_net-xcframework.tar.gz` | iOS | arm64 device + arm64+x86_64 simulator |
+            | `native_net-macos-framework.zip` | macOS | arm64 + x86_64 universal |
             | `native_net-windows-x64.zip` | Windows | x64 DLL (Schannel) |
             | `native_net-linux-x64.tar.gz` | Linux | x64 SO (mbedTLS) |
 

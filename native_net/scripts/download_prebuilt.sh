@@ -101,24 +101,31 @@ mkdir -p "$PREBUILT"
 
 download "native_net.aar" "$PLUGIN_DIR/android/native_net.aar" || true
 
-# ── iOS XCFramework ───────────────────────────────────────────────────────
+# ── iOS XCFramework (iOS only, same as flutter_curl) ─────────────────────
 
 TMP_XCFW="/tmp/nn_xcfw_$$.tar.gz"
 if download "native_net-xcframework.tar.gz" "$TMP_XCFW"; then
+    rm -rf "$PLUGIN_DIR/ios/Frameworks/native_net.xcframework"
     mkdir -p "$PLUGIN_DIR/ios/Frameworks"
     tar xzf "$TMP_XCFW" -C "$PLUGIN_DIR/ios/Frameworks/"
     rm -f "$TMP_XCFW"
     echo "[native_net]   -> ios/Frameworks/native_net.xcframework/"
 fi
 
-# ── macOS XCFramework ────────────────────────────────────────────────────
+# ── macOS framework (separate, same as flutter_curl) ─────────────────────
 
-TMP_XCFW_MAC="/tmp/nn_xcfw_mac_$$.tar.gz"
-if download "native_net-xcframework.tar.gz" "$TMP_XCFW_MAC"; then
+TMP_MACOS="/tmp/nn_macos_$$.zip"
+if download "native_net-macos-framework.zip" "$TMP_MACOS"; then
+    rm -rf "$PLUGIN_DIR/macos/Frameworks/native_net.framework"
     mkdir -p "$PLUGIN_DIR/macos/Frameworks"
-    tar xzf "$TMP_XCFW_MAC" -C "$PLUGIN_DIR/macos/Frameworks/"
-    rm -f "$TMP_XCFW_MAC"
-    echo "[native_net]   -> macos/Frameworks/native_net.xcframework/"
+    unzip -qo "$TMP_MACOS" -d "$PLUGIN_DIR/macos/Frameworks/"
+    # CI produces native_net_macos.framework, rename to native_net.framework
+    if [ -d "$PLUGIN_DIR/macos/Frameworks/native_net_macos.framework" ]; then
+        mv "$PLUGIN_DIR/macos/Frameworks/native_net_macos.framework" \
+           "$PLUGIN_DIR/macos/Frameworks/native_net.framework"
+    fi
+    rm -f "$TMP_MACOS"
+    echo "[native_net]   -> macos/Frameworks/native_net.framework/"
 fi
 
 # ── Windows DLL ──────────────────────────────────────────────────────────
