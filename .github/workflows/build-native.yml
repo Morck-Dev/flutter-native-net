@@ -1,0 +1,339 @@
+name: Build Native Libraries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CURL_VERSION: "8.11.1"
+  MBEDTLS_VERSION: "3.6.2"
+
+jobs:
+  # =========================================================================
+  # Windows x64 -> native_net.dll
+  # =========================================================================
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          cmake -S native_net/src -B build -A x64 -DCMAKE_BUILD_TYPE=Release -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build --config Release --parallel
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir -p out
+          cp build/Release/native_net.dll out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: out/
+
+  # =========================================================================
+  # Linux x64 + ARM64
+  # =========================================================================
+  build-linux-x64:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          cmake -S native_net/src -B build -DCMAKE_BUILD_TYPE=Release -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build --config Release --parallel
+      - name: Collect
+        run: |
+          mkdir -p out
+          cp build/libnative_net.so out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: out/
+
+  build-linux-arm64:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+      - name: Build
+        run: |
+          cmake -S native_net/src -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build --config Release --parallel
+      - name: Collect
+        run: |
+          mkdir -p out
+          cp build/libnative_net.so out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64
+          path: out/
+
+  # =========================================================================
+  # Android all ABIs -> native_net.aar
+  # =========================================================================
+  build-android:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+
+      - name: Build all ABIs
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          for ABI in arm64-v8a armeabi-v7a x86_64; do
+            echo "=== Building $ABI ==="
+            cmake -S native_net/src -B build-$ABI \
+              -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+              -DANDROID_ABI=$ABI \
+              -DANDROID_PLATFORM=android-21 \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DNATIVE_NET_FORCE_BUILD=ON
+            cmake --build build-$ABI --config Release --parallel
+          done
+
+      - name: Package AAR
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          mkdir -p aar/jni/arm64-v8a aar/jni/armeabi-v7a aar/jni/x86_64
+          cp build-arm64-v8a/libnative_net.so   aar/jni/arm64-v8a/
+          cp build-armeabi-v7a/libnative_net.so  aar/jni/armeabi-v7a/
+          cp build-x86_64/libnative_net.so       aar/jni/x86_64/
+
+          echo "=== .so sizes (after strip) ==="
+          ls -lh aar/jni/*/libnative_net.so
+
+          # Minimal AndroidManifest.xml
+          echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.native_net"></manifest>' > aar/AndroidManifest.xml
+
+          # Empty classes.jar (required by AAR spec)
+          touch empty_file
+          jar cf aar/classes.jar empty_file
+          rm empty_file
+
+          # Create AAR (which is just a zip)
+          cd aar && zip -r ../native_net.aar . && cd ..
+          ls -lh native_net.aar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-aar
+          path: native_net.aar
+
+  # =========================================================================
+  # Apple builds (same approach as flutter_curl)
+  # iOS: xcframework (device arm64 + simulator arm64+x86_64)
+  # macOS: separate framework (arm64+x86_64 universal)
+  # =========================================================================
+  build-apple:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Build all 4 Apple targets ---
+
+      - name: Build iOS arm64 (device)
+        run: |
+          cmake -S native_net/src -B build-ios-arm64 \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=9.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build-ios-arm64 --config Release --parallel
+          libtool -static -o build-ios-arm64/combined.a \
+            build-ios-arm64/libnative_net.a \
+            $(find build-ios-arm64/_deps -name "*.a" | tr '\n' ' ')
+          strip -rSTx build-ios-arm64/combined.a
+
+      - name: Build iOS Simulator arm64
+        run: |
+          cmake -S native_net/src -B build-ios-sim-arm64 \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=9.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build-ios-sim-arm64 --config Release --parallel
+          libtool -static -o build-ios-sim-arm64/combined.a \
+            build-ios-sim-arm64/libnative_net.a \
+            $(find build-ios-sim-arm64/_deps -name "*.a" | tr '\n' ' ')
+          strip -rSTx build-ios-sim-arm64/combined.a
+
+      - name: Build iOS Simulator x86_64
+        run: |
+          cmake -S native_net/src -B build-ios-sim-x64 \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=9.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNATIVE_NET_FORCE_BUILD=ON
+          cmake --build build-ios-sim-x64 --config Release --parallel
+          libtool -static -o build-ios-sim-x64/combined.a \
+            build-ios-sim-x64/libnative_net.a \
+            $(find build-ios-sim-x64/_deps -name "*.a" | tr '\n' ' ')
+          strip -rSTx build-ios-sim-x64/combined.a
+
+      - name: Build macOS (arm64 + x86_64)
+        run: |
+          for ARCH in arm64 x86_64; do
+            cmake -S native_net/src -B build-macos-$ARCH \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_OSX_ARCHITECTURES=$ARCH \
+              -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 \
+              -DNATIVE_NET_FORCE_BUILD=ON
+            cmake --build build-macos-$ARCH --config Release --parallel
+            libtool -static -o build-macos-$ARCH/combined.a \
+              build-macos-$ARCH/libnative_net.a \
+              $(find build-macos-$ARCH/_deps -name "*.a" | tr '\n' ' ')
+          done
+
+      # --- Package iOS XCFramework (same as flutter_curl) ---
+
+      - name: Create iOS XCFramework
+        run: |
+          # Combine simulator arm64 + x86_64 into universal binary
+          lipo build-ios-sim-arm64/combined.a build-ios-sim-x64/combined.a \
+            -create -output build-ios-sim-universal.a
+
+          # Manually create xcframework (same as flutter_curl, NOT xcodebuild)
+          rm -rf native_net.xcframework
+          mkdir -p native_net.xcframework/ios-arm64/native_net.framework
+          mkdir -p native_net.xcframework/ios-arm64_x86_64-simulator/native_net.framework
+
+          cp build-ios-arm64/combined.a native_net.xcframework/ios-arm64/native_net.framework/native_net
+          cp build-ios-sim-universal.a native_net.xcframework/ios-arm64_x86_64-simulator/native_net.framework/native_net
+
+          # Write Info.plist (exact same format as flutter_curl)
+          cat > native_net.xcframework/Info.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>AvailableLibraries</key>
+            <array>
+              <dict>
+                <key>LibraryIdentifier</key><string>ios-arm64</string>
+                <key>LibraryPath</key><string>native_net.framework</string>
+                <key>SupportedArchitectures</key><array><string>arm64</string></array>
+                <key>SupportedPlatform</key><string>ios</string>
+              </dict>
+              <dict>
+                <key>LibraryIdentifier</key><string>ios-arm64_x86_64-simulator</string>
+                <key>LibraryPath</key><string>native_net.framework</string>
+                <key>SupportedArchitectures</key><array><string>arm64</string><string>x86_64</string></array>
+                <key>SupportedPlatform</key><string>ios</string>
+                <key>SupportedPlatformVariant</key><string>simulator</string>
+              </dict>
+            </array>
+            <key>CFBundlePackageType</key><string>XFWK</string>
+            <key>XCFrameworkFormatVersion</key><string>1.0</string>
+          </dict>
+          </plist>
+          PLIST
+
+          echo "=== iOS XCFramework ==="
+          find native_net.xcframework -type f
+          ls -lh native_net.xcframework/ios-arm64/native_net.framework/native_net
+          ls -lh native_net.xcframework/ios-arm64_x86_64-simulator/native_net.framework/native_net
+
+      # --- Package macOS framework (separate, same as flutter_curl) ---
+
+      - name: Create macOS framework
+        run: |
+          lipo build-macos-arm64/combined.a build-macos-x86_64/combined.a \
+            -create -output macos-universal.a
+
+          mkdir -p native_net_macos.framework
+          cp macos-universal.a native_net_macos.framework/native_net
+          strip -rSTx native_net_macos.framework/native_net
+
+          echo "=== macOS framework ==="
+          ls -lh native_net_macos.framework/native_net
+
+      - name: Package Apple artifacts
+        run: |
+          tar czf native_net-xcframework.tar.gz native_net.xcframework/
+          zip -r native_net-macos-framework.zip native_net_macos.framework/
+          ls -lh native_net-xcframework.tar.gz native_net-macos-framework.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apple-ios-xcframework
+          path: native_net-xcframework.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apple-macos-framework
+          path: native_net-macos-framework.zip
+
+  # =========================================================================
+  # Package & Release
+  # =========================================================================
+  release:
+    needs: [build-windows, build-linux-x64, build-linux-arm64, build-android, build-apple]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+
+          cp artifacts/android-aar/native_net.aar release/
+          cp artifacts/apple-ios-xcframework/native_net-xcframework.tar.gz release/
+          cp artifacts/apple-macos-framework/native_net-macos-framework.zip release/
+          cd artifacts/windows-x64 && zip -r ../../release/native_net-windows-x64.zip . && cd ../..
+          cd artifacts/linux-x64 && tar czf ../../release/native_net-linux-x64.tar.gz . && cd ../..
+          cd artifacts/linux-arm64 && tar czf ../../release/native_net-linux-arm64.tar.gz . && cd ../..
+
+          echo "=== Release assets ==="
+          ls -lh release/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "native_net ${{ github.ref_name || format('prebuilt-{0}', github.run_number) }}"
+          tag_name: ${{ github.ref_name || format('prebuilt-{0}', github.run_number) }}
+          body: |
+            Prebuilt `native_net` binaries (libcurl ${{ env.CURL_VERSION }} + mbedTLS ${{ env.MBEDTLS_VERSION }}).
+
+            | File | Platform | Contents |
+            |------|----------|----------|
+            | `native_net.aar` | Android | arm64-v8a + armeabi-v7a + x86_64 |
+            | `native_net-xcframework.tar.gz` | iOS | arm64 device + arm64+x86_64 simulator |
+            | `native_net-macos-framework.zip` | macOS | arm64 + x86_64 universal |
+            | `native_net-windows-x64.zip` | Windows x64 | DLL (Schannel) |
+            | `native_net-linux-x64.tar.gz` | Linux x64 | SO (mbedTLS) |
+            | `native_net-linux-arm64.tar.gz` | Linux ARM64 | SO (mbedTLS) |
+
+            **Quick setup:**
+            ```bash
+            cd native_net && bash scripts/download_prebuilt.sh
+            ```
+          files: release/*
+          generate_release_notes: true
